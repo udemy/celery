@@ -713,6 +713,7 @@ class AsynPool(_pool.Pool):
             except KeyError:
                 pass
         self.on_inqueue_close = on_inqueue_close
+        self.hub_remove = hub_remove
 
         def schedule_writes(ready_fds, curindex=[0]):
             # Schedule write operation to ready file descriptor.
@@ -1217,6 +1218,7 @@ class AsynPool(_pool.Pool):
             if queue:
                 for sock in (queue._reader, queue._writer):
                     if not sock.closed:
+                        self.hub_remove(sock)
                         try:
                             sock.close()
                         except (IOError, OSError):
