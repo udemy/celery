@@ -533,6 +533,9 @@ class AsyncResult(ResultBase):
     def pending_start(self):
         return self._get_task_meta().get('pending_start')
 
+    @property
+    def start_time(self):
+        return self._get_task_meta().get('start_time')
 
 @Thenable.register
 @python_2_unicode_compatible

@@ -406,6 +406,7 @@ class Backend(object):
                     'kwargs': getattr(request, 'kwargs', None),
                     'eta': getattr(request, 'eta', None),
                     'pending_start': getattr(request, 'pending_start', None),
+                    'start_time': getattr(request, 'start_time', None),
                     'worker': getattr(request, 'hostname', None),
                     'retries': getattr(request, 'retries', None),
                     'queue': request.delivery_info.get('routing_key')
