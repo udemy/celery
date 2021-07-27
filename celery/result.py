@@ -529,6 +529,10 @@ class AsyncResult(ResultBase):
     def eta(self):
         return self._get_task_meta().get('eta')
 
+    @property
+    def pending_start(self):
+        return self._get_task_meta().get('pending_start')
+
 
 @Thenable.register
 @python_2_unicode_compatible
