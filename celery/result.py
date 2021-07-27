@@ -525,6 +525,10 @@ class AsyncResult(ResultBase):
     def queue(self):
         return self._get_task_meta().get('queue')
 
+    @property
+    def eta(self):
+        return self._get_task_meta().get('eta')
+
 
 @Thenable.register
 @python_2_unicode_compatible
