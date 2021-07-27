@@ -35,11 +35,11 @@ SOFTWARE_INFO = {
 }
 
 #: maximum number of revokes to keep in memory.
-REVOKES_MAX = 50000
+REVOKES_MAX = 5000
 
 #: how many seconds a revoke will be active before
 #: being expired when the max limit has been exceeded.
-REVOKE_EXPIRES = 10800
+REVOKE_EXPIRES = 600  # 10 minutes
 
 #: Mapping of reserved task_id->Request.
 requests = {}
