@@ -376,7 +376,7 @@ class Backend(object):
         return task_id in self._cache
 
     def _get_result_meta(self, result,
-                         state, traceback, request, format_date=True,
+                         state, traceback, request, format_date=False,
                          encode=False):
         if state in self.READY_STATES:
             date_done = datetime.utcnow()
