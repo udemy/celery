@@ -6,6 +6,7 @@ errors are recorded, handlers are applied and so on.
 """
 from __future__ import absolute_import, unicode_literals
 
+import datetime
 import logging
 import os
 import sys
@@ -397,6 +398,8 @@ def build_tracer(name, task, loader=None, hostname=None, store_errors=True,
                 inherit_parent_priority else None
             push_request(task_request)
             try:
+                task_request.start_time = datetime.datetime.utcnow()
+
                 # -*- PRE -*-
                 if prerun_receivers:
                     send_prerun(sender=task, task_id=uuid, task=task,
