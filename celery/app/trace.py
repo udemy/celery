@@ -390,7 +390,8 @@ def build_tracer(name, task, loader=None, hostname=None, store_errors=True,
                     'Task keyword arguments is not a mapping')
             push_task(task)
             task_request = Context(request or {}, args=args,
-                                   called_directly=False, kwargs=kwargs)
+                                   called_directly=False, kwargs=kwargs,
+                                   task_name=task.name)
             root_id = task_request.root_id or uuid
             task_priority = task_request.delivery_info.get('priority') if \
                 inherit_parent_priority else None
