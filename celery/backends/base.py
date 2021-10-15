@@ -765,10 +765,11 @@ class BaseKeyValueStoreBackend(Backend):
         ])
 
     def get_key_for_group(self, group_id, key=''):
-        """Get the cache key for a group by id."""
+        """Get the cache key for a group by id.
+        Use the group_id as a hash tag to use same redis cluster node slot"""
         key_t = self.key_t
         return key_t('').join([
-            self.group_keyprefix, key_t(group_id), key_t(key),
+            self.group_keyprefix, key_t('{{{}}}'.format(group_id)), key_t(key),
         ])
 
     def get_key_for_chord(self, group_id, key=''):
