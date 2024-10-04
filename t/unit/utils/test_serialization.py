@@ -1,46 +1,39 @@
-from __future__ import absolute_import, unicode_literals
-
 import json
 import pickle
 import sys
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
+from unittest.mock import Mock
 
 import pytest
-import pytz
-from case import Mock, mock, skip
 from kombu import Queue
 
-from celery.utils.serialization import (STRTOBOOL_DEFAULT_TABLE,
-                                        UnpickleableExceptionWrapper,
-                                        ensure_serializable,
-                                        get_pickleable_etype, jsonify,
-                                        strtobool)
+from celery.utils.serialization import (STRTOBOOL_DEFAULT_TABLE, UnpickleableExceptionWrapper, ensure_serializable,
+                                        get_pickleable_etype, jsonify, strtobool)
+
+if sys.version_info >= (3, 9):
+    from zoneinfo import ZoneInfo
+else:
+    from backports.zoneinfo import ZoneInfo
 
 
 class test_AAPickle:
 
-    def test_no_cpickle(self):
+    @pytest.mark.masked_modules('cPickle')
+    def test_no_cpickle(self, mask_modules):
         prev = sys.modules.pop('celery.utils.serialization', None)
         try:
-            with mock.mask_modules('cPickle'):
-                from celery.utils.serialization import pickle
-                import pickle as orig_pickle
-                assert pickle.dumps is orig_pickle.dumps
+            import pickle as orig_pickle
+
+            from celery.utils.serialization import pickle
+            assert pickle.dumps is orig_pickle.dumps
         finally:
             sys.modules['celery.utils.serialization'] = prev
 
 
 class test_ensure_serializable:
 
-    @skip.unless_python3()
     def test_json_py3(self):
         expected = (1, "<class 'object'>")
-        actual = ensure_serializable([1, object], encoder=json.dumps)
-        assert expected == actual
-
-    @skip.if_python3()
-    def test_json_py2(self):
-        expected = (1, "<type 'object'>")
         actual = ensure_serializable([1, object], encoder=json.dumps)
         assert expected == actual
 
@@ -74,9 +67,9 @@ class test_jsonify:
         Queue('foo'),
         ['foo', 'bar', 'baz'],
         {'foo': 'bar'},
-        datetime.utcnow(),
-        datetime.utcnow().replace(tzinfo=pytz.utc),
-        datetime.utcnow().replace(microsecond=0),
+        datetime.now(timezone.utc),
+        datetime.now(timezone.utc).replace(tzinfo=ZoneInfo("UTC")),
+        datetime.now(timezone.utc).replace(microsecond=0),
         date(2012, 1, 1),
         time(hour=1, minute=30),
         time(hour=1, minute=30, microsecond=3),
@@ -107,10 +100,7 @@ class test_strtobool:
         assert strtobool(s) == b
 
     def test_unknown_value(self):
-        with pytest.raises(TypeError,
-                           # todo replace below when dropping python 2.7
-                           # match="Cannot coerce 'foo' to type bool"):
-                           match=r"Cannot coerce u?'foo' to type bool"):
+        with pytest.raises(TypeError, match="Cannot coerce 'foo' to type bool"):
             strtobool('foo')
 
     def test_no_op(self):

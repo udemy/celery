@@ -1,9 +1,9 @@
-.. image:: http://docs.celeryproject.org/en/latest/_images/celery-banner-small.png
+.. image:: https://docs.celeryq.dev/en/latest/_images/celery-banner-small.png
 
-|build-status| |coverage| |license| |wheel| |pyversion| |pyimp| |ocbackerbadge| |ocsponsorbadge|
+|build-status| |coverage| |license| |wheel| |semgrep| |pyversion| |pyimp| |ocbackerbadge| |ocsponsorbadge|
 
-:Version: 4.4.7 (cliffs)
-:Web: http://celeryproject.org/
+:Version: 5.4.0 (opalescent)
+:Web: https://docs.celeryq.dev/en/stable/index.html
 :Download: https://pypi.org/project/celery/
 :Source: https://github.com/celery/celery/
 :Keywords: task, queue, job, async, rabbitmq, amqp, redis,
@@ -44,7 +44,7 @@ to high availability and horizontal scaling.
 
 Celery is written in Python, but the protocol can be implemented in any
 language. In addition to Python there's node-celery_ for Node.js,
-a `PHP client`_, `gocelery`_ for golang, and rusty-celery_ for Rust.
+a `PHP client`_, `gocelery`_, gopher-celery_ for Go, and rusty-celery_ for Rust.
 
 Language interoperability can also be achieved by using webhooks
 in such a way that the client enqueues an URL to be requested by a worker.
@@ -52,31 +52,32 @@ in such a way that the client enqueues an URL to be requested by a worker.
 .. _node-celery: https://github.com/mher/node-celery
 .. _`PHP client`: https://github.com/gjedeer/celery-php
 .. _`gocelery`: https://github.com/gocelery/gocelery
+.. _gopher-celery: https://github.com/marselester/gopher-celery
 .. _rusty-celery: https://github.com/rusty-celery/rusty-celery
 
 What do I need?
 ===============
 
-Celery version 4.4.0 runs on,
+Celery version 5.3.5 runs on:
 
-- Python (2.7, 3.5, 3.6, 3.7, 3.8)
-- PyPy2.7 (7.2)
-- PyPy3.5 (7.1)
-- PyPy3.6 (7.6)
+- Python (3.8, 3.9, 3.10, 3.11, 3.12)
+- PyPy3.9+ (v7.3.12+)
 
 
-4.x.x is the last version to support Python 2.7,
-and from the next major version (Celery 5.x) Python 3.6 or newer is required.
+This is the version of celery which will support Python 3.8 or newer.
 
 If you're running an older version of Python, you need to be running
 an older version of Celery:
 
+- Python 3.7: Celery 5.2 or earlier.
+- Python 3.6: Celery 5.1 or earlier.
+- Python 2.7: Celery 4.x series.
 - Python 2.6: Celery series 3.1 or earlier.
 - Python 2.5: Celery series 3.0 or earlier.
-- Python 2.4 was Celery series 2.2 or earlier.
+- Python 2.4: Celery series 2.2 or earlier.
 
 Celery is a project with minimal funding,
-so we don't support Microsoft Windows.
+so we don't support Microsoft Windows but it should be working.
 Please don't open any issues related to that platform.
 
 *Celery* is usually used with a message broker to send and receive messages.
@@ -91,7 +92,7 @@ Get Started
 ===========
 
 If this is the first time you're trying to use Celery, or you're
-new to Celery 4.4 coming from previous versions then you should read our
+new to Celery v5.3.5 coming from previous versions then you should read our
 getting started tutorials:
 
 - `First steps with Celery`_
@@ -103,10 +104,12 @@ getting started tutorials:
     A more complete overview, showing more features.
 
 .. _`First steps with Celery`:
-    http://docs.celeryproject.org/en/latest/getting-started/first-steps-with-celery.html
+    https://docs.celeryq.dev/en/stable/getting-started/first-steps-with-celery.html
 
 .. _`Next steps`:
-    http://docs.celeryproject.org/en/latest/getting-started/next-steps.html
+    https://docs.celeryq.dev/en/stable/getting-started/next-steps.html
+
+ You can also get started with Celery by using a hosted broker transport CloudAMQP. The largest hosting provider of RabbitMQ is a proud sponsor of Celery.
 
 Celery is...
 =============
@@ -118,7 +121,9 @@ Celery is...
     It has an active, friendly community you can talk to for support,
     like at our `mailing-list`_, or the IRC channel.
 
-    Here's one of the simplest applications you can make::
+    Here's one of the simplest applications you can make:
+
+    .. code-block:: python
 
         from celery import Celery
 
@@ -203,14 +208,14 @@ database connections at ``fork``.
 
 .. _`Django`: https://djangoproject.com/
 .. _`Pylons`: http://pylonsproject.org/
-.. _`Flask`: http://flask.pocoo.org/
+.. _`Flask`: https://flask.palletsprojects.com/
 .. _`web2py`: http://web2py.com/
 .. _`Bottle`: https://bottlepy.org/
-.. _`Pyramid`: http://docs.pylonsproject.org/en/latest/docs/pyramid.html
+.. _`Pyramid`: https://docs.pylonsproject.org/projects/pyramid/en/latest/
 .. _`pyramid_celery`: https://pypi.org/project/pyramid_celery/
 .. _`celery-pylons`: https://pypi.org/project/celery-pylons/
 .. _`web2py-celery`: https://code.google.com/p/web2py-celery/
-.. _`Tornado`: http://www.tornadoweb.org/
+.. _`Tornado`: https://www.tornadoweb.org/
 .. _`tornado-celery`: https://github.com/mher/tornado-celery/
 
 .. _celery-documentation:
@@ -223,7 +228,7 @@ tutorials, and an API reference.
 
 最新的中文文档托管在 https://www.celerycn.io/ 中，包含用户指南、教程、API接口等。
 
-.. _`latest documentation`: http://docs.celeryproject.org/en/latest/
+.. _`latest documentation`: https://docs.celeryq.dev/en/latest/
 
 .. _celery-installation:
 
@@ -255,9 +260,9 @@ separating them by commas.
 ::
 
 
-    $ pip install "celery[librabbitmq]"
+    $ pip install "celery[redis]"
 
-    $ pip install "celery[librabbitmq,redis,auth,msgpack]"
+    $ pip install "celery[redis,auth,msgpack]"
 
 The following bundles are available:
 
@@ -285,8 +290,8 @@ Concurrency
 Transports and Backends
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-:``celery[librabbitmq]``:
-    for using the librabbitmq C library.
+:``celery[amqp]``:
+    for using the RabbitMQ amqp python library.
 
 :``celery[redis]``:
     for using Redis as a message transport or as a result backend.
@@ -304,13 +309,16 @@ Transports and Backends
     for using Memcached as a result backend (pure-Python implementation).
 
 :``celery[cassandra]``:
-    for using Apache Cassandra as a result backend with DataStax driver.
+    for using Apache Cassandra/Astra DB as a result backend with the DataStax driver.
 
 :``celery[azureblockblob]``:
     for using Azure Storage as a result backend (using ``azure-storage``)
 
 :``celery[s3]``:
     for using S3 Storage as a result backend.
+
+:``celery[gcs]``:
+    for using Google Cloud Storage as a result backend.
 
 :``celery[couchbase]``:
     for using Couchbase as a result backend.
@@ -358,7 +366,7 @@ Download the latest version of Celery from PyPI:
 
 https://pypi.org/project/celery/
 
-You can install it by doing the following,:
+You can install it by doing the following:
 
 ::
 
@@ -388,11 +396,11 @@ pip commands:
 ::
 
 
-    $ pip install https://github.com/celery/celery/zipball/master#egg=celery
-    $ pip install https://github.com/celery/billiard/zipball/master#egg=billiard
-    $ pip install https://github.com/celery/py-amqp/zipball/master#egg=amqp
-    $ pip install https://github.com/celery/kombu/zipball/master#egg=kombu
-    $ pip install https://github.com/celery/vine/zipball/master#egg=vine
+    $ pip install https://github.com/celery/celery/zipball/main#egg=celery
+    $ pip install https://github.com/celery/billiard/zipball/main#egg=billiard
+    $ pip install https://github.com/celery/py-amqp/zipball/main#egg=amqp
+    $ pip install https://github.com/celery/kombu/zipball/main#egg=kombu
+    $ pip install https://github.com/celery/vine/zipball/main#egg=vine
 
 With git
 ~~~~~~~~
@@ -419,10 +427,10 @@ please join the `celery-users`_ mailing list.
 IRC
 ---
 
-Come chat with us on IRC. The **#celery** channel is located at the `Freenode`_
-network.
+Come chat with us on IRC. The **#celery** channel is located at the
+`Libera Chat`_ network.
 
-.. _`Freenode`: https://freenode.net
+.. _`Libera Chat`: https://libera.chat/
 
 .. _bug-tracker:
 
@@ -458,7 +466,7 @@ Be sure to also read the `Contributing to Celery`_ section in the
 documentation.
 
 .. _`Contributing to Celery`:
-    http://docs.celeryproject.org/en/master/contributing.html
+    https://docs.celeryq.dev/en/stable/contributing.html
 
 |oc-contributors|
 
@@ -485,10 +493,16 @@ link to your website. [`Become a sponsor`_]
 
 .. _`Become a sponsor`: https://opencollective.com/celery#sponsor
 
-|oc-sponsors|
+|oc-sponsor-1| |oc-sponsor-2|
 
-.. |oc-sponsors| image:: https://opencollective.com/celery/sponsor/0/avatar.svg
+.. |oc-sponsor-1| image:: https://opencollective.com/celery/sponsor/0/avatar.svg
     :target: https://opencollective.com/celery/sponsor/0/website
+
+.. |oc-sponsor-2| image:: https://upstash.com/logo/upstash-dark-bg.svg
+    :target: http://upstash.com/?code=celery
+    :alt: Upstash
+    :width: 200
+    :height: 57
 
 .. _license:
 
@@ -500,12 +514,12 @@ file in the top distribution directory for the full license text.
 
 .. # vim: syntax=rst expandtab tabstop=4 shiftwidth=4 shiftround
 
-.. |build-status| image:: https://secure.travis-ci.org/celery/celery.png?branch=master
+.. |build-status| image:: https://github.com/celery/celery/actions/workflows/python-package.yml/badge.svg
     :alt: Build status
-    :target: https://travis-ci.org/celery/celery
+    :target: https://github.com/celery/celery/actions/workflows/python-package.yml
 
-.. |coverage| image:: https://codecov.io/github/celery/celery/coverage.svg?branch=master
-    :target: https://codecov.io/github/celery/celery?branch=master
+.. |coverage| image:: https://codecov.io/github/celery/celery/coverage.svg?branch=main
+    :target: https://codecov.io/github/celery/celery?branch=main
 
 .. |license| image:: https://img.shields.io/pypi/l/celery.svg
     :alt: BSD License
@@ -515,12 +529,16 @@ file in the top distribution directory for the full license text.
     :alt: Celery can be installed via wheel
     :target: https://pypi.org/project/celery/
 
+.. |semgrep| image:: https://img.shields.io/badge/semgrep-security-green.svg
+    :alt: Semgrep security
+    :target: https://go.semgrep.dev/home
+
 .. |pyversion| image:: https://img.shields.io/pypi/pyversions/celery.svg
     :alt: Supported Python versions.
     :target: https://pypi.org/project/celery/
 
 .. |pyimp| image:: https://img.shields.io/pypi/implementation/celery.svg
-    :alt: Support Python implementations.
+    :alt: Supported Python implementations.
     :target: https://pypi.org/project/celery/
 
 .. |ocbackerbadge| image:: https://opencollective.com/celery/backers/badge.svg

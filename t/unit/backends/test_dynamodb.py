@@ -1,22 +1,19 @@
-# -*- coding: utf-8 -*-
-from __future__ import absolute_import, unicode_literals
-
 from decimal import Decimal
+from unittest.mock import ANY, MagicMock, Mock, call, patch, sentinel
 
 import pytest
-from case import MagicMock, Mock, patch, sentinel, skip
 
-from celery import states
+from celery import states, uuid
 from celery.backends import dynamodb as module
 from celery.backends.dynamodb import DynamoDBBackend
 from celery.exceptions import ImproperlyConfigured
-from celery.five import string
+
+pytest.importorskip('boto3')
 
 
-@skip.unless_module('boto3')
 class test_DynamoDBBackend:
-    def setup(self):
-        self._static_timestamp = Decimal(1483425566.52)  # noqa
+    def setup_method(self):
+        self._static_timestamp = Decimal(1483425566.52)
         self.app.conf.result_backend = 'dynamodb://'
 
     @property
@@ -124,23 +121,6 @@ class test_DynamoDBBackend:
         mock_set_table_ttl.assert_called_once()
 
     def test_get_or_create_table_not_exists(self):
-        self.backend._client = MagicMock()
-        mock_create_table = self.backend._client.create_table = MagicMock()
-        mock_describe_table = self.backend._client.describe_table = \
-            MagicMock()
-
-        mock_describe_table.return_value = {
-            'Table': {
-                'TableStatus': 'ACTIVE'
-            }
-        }
-
-        self.backend._get_or_create_table()
-        mock_create_table.assert_called_once_with(
-            **self.backend._get_table_schema()
-        )
-
-    def test_get_or_create_table_already_exists(self):
         from botocore.exceptions import ClientError
 
         self.backend._client = MagicMock()
@@ -148,15 +128,27 @@ class test_DynamoDBBackend:
         client_error = ClientError(
             {
                 'Error': {
-                    'Code': 'ResourceInUseException',
-                    'Message': 'Table already exists: {}'.format(
-                        self.backend.table_name
-                    )
+                    'Code': 'ResourceNotFoundException'
                 }
             },
-            'CreateTable'
+            'DescribeTable'
         )
-        mock_create_table.side_effect = client_error
+        mock_describe_table = self.backend._client.describe_table = \
+            MagicMock()
+        mock_describe_table.side_effect = client_error
+        self.backend._wait_for_table_status = MagicMock()
+
+        self.backend._get_or_create_table()
+        mock_describe_table.assert_called_once_with(
+            TableName=self.backend.table_name
+        )
+        mock_create_table.assert_called_once_with(
+            **self.backend._get_table_schema()
+        )
+
+    def test_get_or_create_table_already_exists(self):
+        self.backend._client = MagicMock()
+        mock_create_table = self.backend._client.create_table = MagicMock()
         mock_describe_table = self.backend._client.describe_table = \
             MagicMock()
 
@@ -170,6 +162,7 @@ class test_DynamoDBBackend:
         mock_describe_table.assert_called_once_with(
             TableName=self.backend.table_name
         )
+        mock_create_table.assert_not_called()
 
     def test_wait_for_table_status(self):
         self.backend._client = MagicMock()
@@ -394,19 +387,19 @@ class test_DynamoDBBackend:
 
     def test_prepare_get_request(self):
         expected = {
-            'TableName': u'celery',
-            'Key': {u'id': {u'S': u'abcdef'}}
+            'TableName': 'celery',
+            'Key': {'id': {'S': 'abcdef'}}
         }
         assert self.backend._prepare_get_request('abcdef') == expected
 
     def test_prepare_put_request(self):
         expected = {
-            'TableName': u'celery',
+            'TableName': 'celery',
             'Item': {
-                u'id': {u'S': u'abcdef'},
-                u'result': {u'B': u'val'},
-                u'timestamp': {
-                    u'N': str(Decimal(self._static_timestamp))
+                'id': {'S': 'abcdef'},
+                'result': {'B': 'val'},
+                'timestamp': {
+                    'N': str(Decimal(self._static_timestamp))
                 }
             }
         }
@@ -417,20 +410,48 @@ class test_DynamoDBBackend:
     def test_prepare_put_request_with_ttl(self):
         ttl = self.backend.time_to_live_seconds = 30
         expected = {
-            'TableName': u'celery',
+            'TableName': 'celery',
             'Item': {
-                u'id': {u'S': u'abcdef'},
-                u'result': {u'B': u'val'},
-                u'timestamp': {
-                    u'N': str(Decimal(self._static_timestamp))
+                'id': {'S': 'abcdef'},
+                'result': {'B': 'val'},
+                'timestamp': {
+                    'N': str(Decimal(self._static_timestamp))
                 },
-                u'ttl': {
-                    u'N': str(int(self._static_timestamp + ttl))
+                'ttl': {
+                    'N': str(int(self._static_timestamp + ttl))
                 }
             }
         }
         with patch('celery.backends.dynamodb.time', self._mock_time):
             result = self.backend._prepare_put_request('abcdef', 'val')
+        assert result == expected
+
+    def test_prepare_init_count_request(self):
+        expected = {
+            'TableName': 'celery',
+            'Item': {
+                'id': {'S': 'abcdef'},
+                'chord_count': {'N': '0'},
+                'timestamp': {
+                    'N': str(Decimal(self._static_timestamp))
+                },
+            }
+        }
+        with patch('celery.backends.dynamodb.time', self._mock_time):
+            result = self.backend._prepare_init_count_request('abcdef')
+        assert result == expected
+
+    def test_prepare_inc_count_request(self):
+        expected = {
+            'TableName': 'celery',
+            'Key': {
+                'id': {'S': 'abcdef'},
+            },
+            'UpdateExpression': 'set chord_count = chord_count + :num',
+            'ExpressionAttributeValues': {":num": {"N": "1"}},
+            'ReturnValues': 'UPDATED_NEW',
+        }
+        result = self.backend._prepare_inc_count_request('abcdef')
         assert result == expected
 
     def test_item_to_dict(self):
@@ -460,7 +481,7 @@ class test_DynamoDBBackend:
 
         assert self.backend.get('1f3fab') is None
         self.backend.client.get_item.assert_called_once_with(
-            Key={u'id': {u'S': u'1f3fab'}},
+            Key={'id': {'S': '1f3fab'}},
             TableName='celery'
         )
 
@@ -480,9 +501,9 @@ class test_DynamoDBBackend:
         _, call_kwargs = self.backend._client.put_item.call_args
         expected_kwargs = {
             'Item': {
-                u'timestamp': {u'N': str(self._static_timestamp)},
-                u'id': {u'S': string(sentinel.key)},
-                u'result': {u'B': sentinel.value}
+                'timestamp': {'N': str(self._static_timestamp)},
+                'id': {'S': str(sentinel.key)},
+                'result': {'B': sentinel.value}
             },
             'TableName': 'celery'
         }
@@ -503,10 +524,10 @@ class test_DynamoDBBackend:
         _, call_kwargs = self.backend._client.put_item.call_args
         expected_kwargs = {
             'Item': {
-                u'timestamp': {u'N': str(self._static_timestamp)},
-                u'id': {u'S': string(sentinel.key)},
-                u'result': {u'B': sentinel.value},
-                u'ttl': {u'N': str(int(self._static_timestamp + ttl))},
+                'timestamp': {'N': str(self._static_timestamp)},
+                'id': {'S': str(sentinel.key)},
+                'result': {'B': sentinel.value},
+                'ttl': {'N': str(int(self._static_timestamp + ttl))},
             },
             'TableName': 'celery'
         }
@@ -520,8 +541,41 @@ class test_DynamoDBBackend:
         # should return None
         assert self.backend.delete('1f3fab') is None
         self.backend.client.delete_item.assert_called_once_with(
-            Key={u'id': {u'S': u'1f3fab'}},
+            Key={'id': {'S': '1f3fab'}},
             TableName='celery'
+        )
+
+    def test_inc(self):
+        mocked_incr_response = {
+            'Attributes': {
+                'chord_count': {
+                    'N': '1'
+                }
+            },
+            'ResponseMetadata': {
+                'RequestId': '16d31c72-51f6-4538-9415-499f1135dc59',
+                'HTTPStatusCode': 200,
+                'HTTPHeaders': {
+                    'date': 'Wed, 10 Jan 2024 17:53:41 GMT',
+                    'x-amzn-requestid': '16d31c72-51f6-4538-9415-499f1135dc59',
+                    'content-type': 'application/x-amz-json-1.0',
+                    'x-amz-crc32': '3438282865',
+                    'content-length': '40',
+                    'server': 'Jetty(11.0.17)'
+                },
+                'RetryAttempts': 0
+            }
+        }
+        self.backend._client = MagicMock()
+        self.backend._client.update_item = MagicMock(return_value=mocked_incr_response)
+
+        assert self.backend.incr('1f3fab') == 1
+        self.backend.client.update_item.assert_called_once_with(
+            Key={'id': {'S': '1f3fab'}},
+            TableName='celery',
+            UpdateExpression='set chord_count = chord_count + :num',
+            ExpressionAttributeValues={":num": {"N": "1"}},
+            ReturnValues='UPDATED_NEW',
         )
 
     def test_backend_by_url(self, url='dynamodb://'):
@@ -544,3 +598,33 @@ class test_DynamoDBBackend:
         assert self.backend.write_capacity_units == 20
         assert self.backend.time_to_live_seconds == 600
         assert self.backend.endpoint_url is None
+
+    def test_apply_chord(self, unlock="celery.chord_unlock"):
+        self.app.tasks[unlock] = Mock()
+        chord_uuid = uuid()
+        header_result_args = (
+            chord_uuid,
+            [self.app.AsyncResult(x) for x in range(3)],
+        )
+        self.backend._client = MagicMock()
+        self.backend.apply_chord(header_result_args, None)
+        assert self.backend._client.put_item.call_args_list == [
+            call(
+                TableName="celery",
+                Item={
+                    "id": {"S": f"b'chord-unlock-{chord_uuid}'"},
+                    "chord_count": {"N": "0"},
+                    "timestamp": {"N": ANY},
+                },
+            ),
+            call(
+                TableName="celery",
+                Item={
+                    "id": {"S": f"b'celery-taskset-meta-{chord_uuid}'"},
+                    "result": {
+                        "B": ANY,
+                    },
+                    "timestamp": {"N": ANY},
+                },
+            ),
+        ]

@@ -1,6 +1,4 @@
 """Create Celery app instances used for testing."""
-from __future__ import absolute_import, unicode_literals
-
 import weakref
 from contextlib import contextmanager
 from copy import deepcopy
@@ -22,7 +20,7 @@ DEFAULT_TEST_CONFIG = {
 }
 
 
-class Trap(object):
+class Trap:
     """Trap that pretends to be an app but raises an exception instead.
 
     This to protect from code that does not properly pass app instances,
@@ -42,7 +40,7 @@ class UnitLogging(symbol_by_name(Celery.log_cls)):
     """Sets up logging for the test application."""
 
     def __init__(self, *args, **kwargs):
-        super(UnitLogging, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.already_setup = True
 
 
@@ -78,12 +76,14 @@ def set_trap(app):
     prev_tls = _state._tls
     _state.set_default_app(trap)
 
-    class NonTLS(object):
+    class NonTLS:
         current_app = trap
     _state._tls = NonTLS()
 
-    yield
-    _state._tls = prev_tls
+    try:
+        yield
+    finally:
+        _state._tls = prev_tls
 
 
 @contextmanager
@@ -97,15 +97,16 @@ def setup_default_app(app, use_trap=False):
     prev_finalizers = set(_state._on_app_finalizers)
     prev_apps = weakref.WeakSet(_state._apps)
 
-    if use_trap:
-        with set_trap(app):
+    try:
+        if use_trap:
+            with set_trap(app):
+                yield
+        else:
             yield
-    else:
-        yield
-
-    _state.set_default_app(prev_default_app)
-    _state._tls.current_app = prev_current_app
-    if app is not prev_current_app:
-        app.close()
-    _state._on_app_finalizers = prev_finalizers
-    _state._apps = prev_apps
+    finally:
+        _state.set_default_app(prev_default_app)
+        _state._tls.current_app = prev_current_app
+        if app is not prev_current_app:
+            app.close()
+        _state._on_app_finalizers = prev_finalizers
+        _state._apps = prev_apps

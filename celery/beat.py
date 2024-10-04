@@ -1,6 +1,4 @@
-# -*- coding: utf-8 -*-
 """The periodic task scheduler."""
-from __future__ import absolute_import, unicode_literals
 
 import copy
 import errno
@@ -22,9 +20,9 @@ from kombu.utils.functional import maybe_evaluate, reprcall
 from kombu.utils.objects import cached_property
 
 from . import __version__, platforms, signals
-from .five import (items, monotonic, python_2_unicode_compatible, reraise,
-                   values)
+from .exceptions import reraise
 from .schedules import crontab, maybe_schedule
+from .utils.functional import is_numeric_value
 from .utils.imports import load_extension_class_names, symbol_by_name
 from .utils.log import get_logger, iter_open_logger_fds
 from .utils.time import humanize_seconds, maybe_make_aware
@@ -47,8 +45,8 @@ class SchedulingError(Exception):
     """An error occurred while scheduling a task."""
 
 
-class BeatLazyFunc(object):
-    """An lazy function declared in 'beat_schedule' and called before sending to worker.
+class BeatLazyFunc:
+    """A lazy function declared in 'beat_schedule' and called before sending to worker.
 
     Example:
 
@@ -79,8 +77,7 @@ class BeatLazyFunc(object):
 
 
 @total_ordering
-@python_2_unicode_compatible
-class ScheduleEntry(object):
+class ScheduleEntry:
     """An entry in the scheduler.
 
     Arguments:
@@ -160,11 +157,11 @@ class ScheduleEntry(object):
         })
 
     def is_due(self):
-        """See :meth:`~celery.schedule.schedule.is_due`."""
+        """See :meth:`~celery.schedules.schedule.is_due`."""
         return self.schedule.is_due(self.last_run_at)
 
     def __iter__(self):
-        return iter(items(vars(self)))
+        return iter(vars(self).items())
 
     def __repr__(self):
         return '<{name}: {0.name} {call} {0.schedule}'.format(
@@ -198,16 +195,26 @@ class ScheduleEntry(object):
         """
         return self.editable_fields_equal(other)
 
-    def __ne__(self, other):
-        """Test schedule entries inequality.
 
-        Will only compare "editable" fields:
-        ``task``, ``schedule``, ``args``, ``kwargs``, ``options``.
-        """
-        return not self == other
+def _evaluate_entry_args(entry_args):
+    if not entry_args:
+        return []
+    return [
+        v() if isinstance(v, BeatLazyFunc) else v
+        for v in entry_args
+    ]
 
 
-class Scheduler(object):
+def _evaluate_entry_kwargs(entry_kwargs):
+    if not entry_kwargs:
+        return {}
+    return {
+        k: v() if isinstance(v, BeatLazyFunc) else v
+        for k, v in entry_kwargs.items()
+    }
+
+
+class Scheduler:
     """Scheduler for periodic tasks.
 
     The :program:`celery beat` program may instantiate this class
@@ -275,7 +282,10 @@ class Scheduler(object):
             error('Message Error: %s\n%s',
                   exc, traceback.format_stack(), exc_info=True)
         else:
-            debug('%s sent. id->%s', entry.task, result.id)
+            if result and hasattr(result, 'id'):
+                debug('%s sent. id->%s', entry.task, result.id)
+            else:
+                debug('%s sent.', entry.task)
 
     def adjust(self, n, drift=-0.010):
         if n and n > 0:
@@ -286,7 +296,7 @@ class Scheduler(object):
         return entry.is_due()
 
     def _when(self, entry, next_time_to_run, mktime=timegm):
-        """Return a utc timestamp, make sure heapq in currect order."""
+        """Return a utc timestamp, make sure heapq in correct order."""
         adjust = self.adjust
 
         as_now = maybe_make_aware(entry.default_now())
@@ -299,7 +309,7 @@ class Scheduler(object):
         """Populate the heap with the data contained in the schedule."""
         priority = 5
         self._heap = []
-        for entry in values(self.schedule):
+        for entry in self.schedule.values():
             is_due, next_call_delay = entry.is_due()
             self._heap.append(event_t(
                 self._when(
@@ -347,7 +357,9 @@ class Scheduler(object):
             else:
                 heappush(H, verify)
                 return min(verify[0], max_interval)
-        return min(adjust(next_time_to_run) or max_interval, max_interval)
+        adjusted_next_time_to_run = adjust(next_time_to_run)
+        return min(adjusted_next_time_to_run if is_numeric_value(adjusted_next_time_to_run) else max_interval,
+                   max_interval)
 
     def schedules_equal(self, old_schedules, new_schedules):
         if old_schedules is new_schedules is None:
@@ -367,7 +379,7 @@ class Scheduler(object):
     def should_sync(self):
         return (
             (not self._last_sync or
-             (monotonic() - self._last_sync) > self.sync_every) or
+             (time.monotonic() - self._last_sync) > self.sync_every) or
             (self.sync_every_tasks and
              self._tasks_since_sync >= self.sync_every_tasks)
         )
@@ -384,8 +396,8 @@ class Scheduler(object):
         task = self.app.tasks.get(entry.task)
 
         try:
-            entry_args = [v() if isinstance(v, BeatLazyFunc) else v for v in (entry.args or [])]
-            entry_kwargs = {k: v() if isinstance(v, BeatLazyFunc) else v for k, v in entry.kwargs.items()}
+            entry_args = _evaluate_entry_args(entry.args)
+            entry_kwargs = _evaluate_entry_kwargs(entry.kwargs)
             if task:
                 return task.apply_async(entry_args, entry_kwargs,
                                         producer=producer,
@@ -415,7 +427,7 @@ class Scheduler(object):
             debug('beat: Synchronizing schedule...')
             self.sync()
         finally:
-            self._last_sync = monotonic()
+            self._last_sync = time.monotonic()
             self._tasks_since_sync = 0
 
     def sync(self):
@@ -438,7 +450,7 @@ class Scheduler(object):
     def update_from_dict(self, dict_):
         self.schedule.update({
             name: self._maybe_entry(name, entry)
-            for name, entry in items(dict_)
+            for name, entry in dict_.items()
         })
 
     def merge_inplace(self, b):
@@ -498,7 +510,7 @@ class PersistentScheduler(Scheduler):
 
     def __init__(self, *args, **kwargs):
         self.schedule_filename = kwargs.get('schedule_filename')
-        Scheduler.__init__(self, *args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def _remove_db(self):
         for suffix in self.known_suffixes:
@@ -529,57 +541,57 @@ class PersistentScheduler(Scheduler):
         self._create_schedule()
 
         tz = self.app.conf.timezone
-        stored_tz = self._store.get(str('tz'))
+        stored_tz = self._store.get('tz')
         if stored_tz is not None and stored_tz != tz:
             warning('Reset: Timezone changed from %r to %r', stored_tz, tz)
             self._store.clear()   # Timezone changed, reset db!
         utc = self.app.conf.enable_utc
-        stored_utc = self._store.get(str('utc_enabled'))
+        stored_utc = self._store.get('utc_enabled')
         if stored_utc is not None and stored_utc != utc:
             choices = {True: 'enabled', False: 'disabled'}
             warning('Reset: UTC changed from %s to %s',
                     choices[stored_utc], choices[utc])
             self._store.clear()   # UTC setting changed, reset db!
-        entries = self._store.setdefault(str('entries'), {})
+        entries = self._store.setdefault('entries', {})
         self.merge_inplace(self.app.conf.beat_schedule)
         self.install_default_entries(self.schedule)
         self._store.update({
-            str('__version__'): __version__,
-            str('tz'): tz,
-            str('utc_enabled'): utc,
+            '__version__': __version__,
+            'tz': tz,
+            'utc_enabled': utc,
         })
         self.sync()
         debug('Current schedule:\n' + '\n'.join(
-            repr(entry) for entry in values(entries)))
+            repr(entry) for entry in entries.values()))
 
     def _create_schedule(self):
         for _ in (1, 2):
             try:
-                self._store[str('entries')]
-            except KeyError:
+                self._store['entries']
+            except (KeyError, UnicodeDecodeError, TypeError):
                 # new schedule db
                 try:
-                    self._store[str('entries')] = {}
-                except KeyError as exc:
+                    self._store['entries'] = {}
+                except (KeyError, UnicodeDecodeError, TypeError) as exc:
                     self._store = self._destroy_open_corrupted_schedule(exc)
                     continue
             else:
-                if str('__version__') not in self._store:
+                if '__version__' not in self._store:
                     warning('DB Reset: Account for new __version__ field')
                     self._store.clear()   # remove schedule at 2.2.2 upgrade.
-                elif str('tz') not in self._store:
+                elif 'tz' not in self._store:
                     warning('DB Reset: Account for new tz field')
                     self._store.clear()   # remove schedule at 3.0.8 upgrade
-                elif str('utc_enabled') not in self._store:
+                elif 'utc_enabled' not in self._store:
                     warning('DB Reset: Account for new utc_enabled field')
                     self._store.clear()   # remove schedule at 3.0.9 upgrade
             break
 
     def get_schedule(self):
-        return self._store[str('entries')]
+        return self._store['entries']
 
     def set_schedule(self, schedule):
-        self._store[str('entries')] = schedule
+        self._store['entries'] = schedule
     schedule = property(get_schedule, set_schedule)
 
     def sync(self):
@@ -592,10 +604,10 @@ class PersistentScheduler(Scheduler):
 
     @property
     def info(self):
-        return '    . db -> {self.schedule_filename}'.format(self=self)
+        return f'    . db -> {self.schedule_filename}'
 
 
-class Service(object):
+class Service:
     """Celery periodic task service."""
 
     scheduler_cls = PersistentScheduler
@@ -652,8 +664,7 @@ class Service(object):
     def get_scheduler(self, lazy=False,
                       extension_namespace='celery.beat_schedulers'):
         filename = self.schedule_filename
-        aliases = dict(
-            load_extension_class_names(extension_namespace) or {})
+        aliases = dict(load_extension_class_names(extension_namespace))
         return symbol_by_name(self.scheduler_cls, aliases=aliases)(
             app=self.app,
             schedule_filename=filename,
@@ -670,7 +681,7 @@ class _Threaded(Thread):
     """Embedded task scheduler using threading."""
 
     def __init__(self, app, **kwargs):
-        super(_Threaded, self).__init__()
+        super().__init__()
         self.app = app
         self.service = Service(app, **kwargs)
         self.daemon = True
@@ -689,10 +700,10 @@ try:
 except NotImplementedError:     # pragma: no cover
     _Process = None
 else:
-    class _Process(Process):    # noqa
+    class _Process(Process):
 
         def __init__(self, app, **kwargs):
-            super(_Process, self).__init__()
+            super().__init__()
             self.app = app
             self.service = Service(app, **kwargs)
             self.name = 'Beat'

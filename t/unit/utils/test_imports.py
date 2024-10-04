@@ -1,13 +1,12 @@
-from __future__ import absolute_import, unicode_literals
-
+import os
+import platform
 import sys
+from unittest.mock import Mock, patch
 
 import pytest
-from case import Mock, patch, skip
 
-from celery.five import bytes_if_py2
-from celery.utils.imports import (NotAPackage, find_module, gen_task_name,
-                                  module_file, qualname, reload_from_cwd)
+from celery.utils.imports import (NotAPackage, cwd_in_path, find_module, gen_task_name, module_file, qualname,
+                                  reload_from_cwd)
 
 
 def test_find_module():
@@ -48,7 +47,6 @@ def test_find_module_legacy_namespace_package(tmp_path, monkeypatch):
         assert exc_info.value.args[0] == 'pkg.foo.bar'
 
 
-@skip.unless_python3()
 def test_find_module_pep420_namespace_package(tmp_path, monkeypatch):
     monkeypatch.chdir(str(tmp_path))
     (tmp_path / 'pkg' / 'foo').mkdir(parents=True)
@@ -69,7 +67,7 @@ def test_find_module_pep420_namespace_package(tmp_path, monkeypatch):
 
 
 def test_qualname():
-    Class = type(bytes_if_py2('Fox'), (object,), {
+    Class = type('Fox', (object,), {
         '__module__': 'quick.brown',
     })
     assert qualname(Class) == 'quick.brown.Fox'
@@ -95,6 +93,26 @@ def test_module_file():
     m2 = Mock()
     m2.__file__ = '/opt/foo/xyz.py'
     assert module_file(m1) == '/opt/foo/xyz.py'
+
+
+def test_cwd_in_path(tmp_path, monkeypatch):
+    now_cwd = os.getcwd()
+    t = str(tmp_path) + "/foo"
+    os.mkdir(t)
+    os.chdir(t)
+    with cwd_in_path():
+        assert os.path.exists(t) is True
+
+    if sys.platform == "win32" or "Windows" in platform.platform():
+        # If it is a Windows server, other processes cannot delete the current working directory being used by celery
+        # . If you want to delete it, you need to terminate the celery process. If it is a Linux server, the current
+        # working directory of celery can be deleted by other processes.
+        pass
+    else:
+        os.rmdir(t)
+        with cwd_in_path():
+            assert os.path.exists(t) is False
+    os.chdir(now_cwd)
 
 
 class test_gen_task_name:

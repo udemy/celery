@@ -1,25 +1,23 @@
-from __future__ import absolute_import, unicode_literals
-
 import socket
 import tempfile
 from datetime import datetime, timedelta
+from unittest.mock import ANY, MagicMock, Mock, patch, sentinel
 
 import pytest
-from case import ANY, ContextMock, MagicMock, Mock, patch
 from kombu import Queue
 from kombu.exceptions import EncodeError
 
-from celery import Task, group, uuid
+from celery import Task, chain, group, uuid
 from celery.app.task import _reprtask
+from celery.canvas import StampingVisitor, signature
+from celery.contrib.testing.mocks import ContextMock
 from celery.exceptions import Ignore, ImproperlyConfigured, Retry
-from celery.five import items, range, string_t
 from celery.result import AsyncResult, EagerResult
-from celery.task.base import Task as OldTask
-from celery.utils.time import parse_iso8601
+from celery.utils.serialization import UnpickleableExceptionWrapper
 
 try:
     from urllib.error import HTTPError
-except ImportError:  # pragma: no cover
+except ImportError:
     from urllib2 import HTTPError
 
 
@@ -51,9 +49,18 @@ class TaskWithRetry(Task):
     retry_jitter = False
 
 
+class TaskWithRetryButForTypeError(Task):
+    autoretry_for = (Exception,)
+    dont_autoretry_for = (TypeError,)
+    retry_kwargs = {'max_retries': 5}
+    retry_backoff = True
+    retry_backoff_max = 700
+    retry_jitter = False
+
+
 class TasksCase:
 
-    def setup(self):
+    def setup_method(self):
         self.mytask = self.app.task(shared=False)(return_True)
 
         @self.app.task(bind=True, count=0, shared=False)
@@ -147,6 +154,27 @@ class TasksCase:
 
         self.retry_task_auto_retry_exception_with_new_args = retry_task_auto_retry_exception_with_new_args
 
+        @self.app.task(bind=True, max_retries=10, iterations=0, shared=False,
+                       autoretry_for=(Exception,))
+        def retry_task_max_retries_override(self, **kwargs):
+            # Test for #6436
+            self.iterations += 1
+            if self.iterations == 3:
+                # I wanna force fail here cause i have enough
+                self.retry(exc=MyCustomException, max_retries=0)
+            self.retry(exc=MyCustomException)
+
+        self.retry_task_max_retries_override = retry_task_max_retries_override
+
+        @self.app.task(bind=True, max_retries=0, iterations=0, shared=False,
+                       autoretry_for=(Exception,))
+        def retry_task_explicit_exception(self, **kwargs):
+            # Test for #6436
+            self.iterations += 1
+            raise MyCustomException()
+
+        self.retry_task_explicit_exception = retry_task_explicit_exception
+
         @self.app.task(bind=True, max_retries=3, iterations=0, shared=False)
         def retry_task_raise_without_throw(self, **kwargs):
             self.iterations += 1
@@ -188,6 +216,13 @@ class TasksCase:
 
         self.retry_task_customexc = retry_task_customexc
 
+        @self.app.task(bind=True, max_retries=3, iterations=0, shared=False)
+        def retry_task_unpickleable_exc(self, foo, bar):
+            self.iterations += 1
+            raise self.retry(countdown=0, exc=UnpickleableException(foo, bar))
+
+        self.retry_task_unpickleable_exc = retry_task_unpickleable_exc
+
         @self.app.task(bind=True, autoretry_for=(ZeroDivisionError,),
                        shared=False)
         def autoretry_task_no_kwargs(self, a, b):
@@ -204,27 +239,14 @@ class TasksCase:
 
         self.autoretry_task = autoretry_task
 
-        @self.app.task(bind=True, autoretry_for=(HTTPError,),
-                       retry_backoff=True, shared=False)
-        def autoretry_backoff_task(self, url):
+        @self.app.task(bind=True, autoretry_for=(ArithmeticError,),
+                       dont_autoretry_for=(ZeroDivisionError,),
+                       retry_kwargs={'max_retries': 5}, shared=False)
+        def autoretry_arith_task(self, a, b):
             self.iterations += 1
-            if "error" in url:
-                fp = tempfile.TemporaryFile()
-                raise HTTPError(url, '500', 'Error', '', fp)
-            return url
+            return a / b
 
-        self.autoretry_backoff_task = autoretry_backoff_task
-
-        @self.app.task(bind=True, autoretry_for=(HTTPError,),
-                       retry_backoff=True, retry_jitter=True, shared=False)
-        def autoretry_backoff_jitter_task(self, url):
-            self.iterations += 1
-            if "error" in url:
-                fp = tempfile.TemporaryFile()
-                raise HTTPError(url, '500', 'Error', '', fp)
-            return url
-
-        self.autoretry_backoff_jitter_task = autoretry_backoff_jitter_task
+        self.autoretry_arith_task = autoretry_arith_task
 
         @self.app.task(bind=True, base=TaskWithRetry, shared=False)
         def autoretry_for_from_base_task(self, a, b):
@@ -353,6 +375,13 @@ class MyCustomException(Exception):
     """Random custom exception."""
 
 
+class UnpickleableException(Exception):
+    """Exception that doesn't survive a pickling roundtrip (dump + load)."""
+    def __init__(self, foo, bar):
+        super().__init__(foo)
+        self.bar = bar
+
+
 class test_task_retries(TasksCase):
 
     def test_retry(self):
@@ -404,6 +433,12 @@ class test_task_retries(TasksCase):
         assert sig.options['exchange'] == 'testex'
         assert sig.options['routing_key'] == 'testrk'
 
+    def test_signature_from_request__shadow_name(self):
+        self.retry_task.push_request()
+        self.retry_task.request.shadow = 'test'
+        sig = self.retry_task.signature_from_request()
+        assert sig.options['shadow'] == 'test'
+
     def test_retry_kwargs_can_be_empty(self):
         self.retry_task_mockapply.push_request()
         try:
@@ -434,6 +469,22 @@ class test_task_retries(TasksCase):
 
     def test_eager_retry_with_autoretry_for_exception(self):
         assert self.retry_task_auto_retry_exception_with_new_args.si(place_holder="test").apply().get() == "test"
+
+    def test_retry_task_max_retries_override(self):
+        self.retry_task_max_retries_override.max_retries = 10
+        self.retry_task_max_retries_override.iterations = 0
+        result = self.retry_task_max_retries_override.apply()
+        with pytest.raises(MyCustomException):
+            result.get()
+        assert self.retry_task_max_retries_override.iterations == 3
+
+    def test_retry_task_explicit_exception(self):
+        self.retry_task_explicit_exception.max_retries = 0
+        self.retry_task_explicit_exception.iterations = 0
+        result = self.retry_task_explicit_exception.apply()
+        with pytest.raises(MyCustomException):
+            result.get()
+        assert self.retry_task_explicit_exception.iterations == 1
 
     def test_retry_eager_should_return_value(self):
         self.retry_task.max_retries = 3
@@ -482,6 +533,22 @@ class test_task_retries(TasksCase):
             result.get()
         assert self.retry_task_customexc.iterations == 3
 
+    def test_retry_with_unpickleable_exception(self):
+        self.retry_task_unpickleable_exc.max_retries = 2
+        self.retry_task_unpickleable_exc.iterations = 0
+
+        result = self.retry_task_unpickleable_exc.apply(
+            ["foo", "bar"]
+        )
+        with pytest.raises(UnpickleableExceptionWrapper) as exc_info:
+            result.get()
+
+        assert self.retry_task_unpickleable_exc.iterations == 3
+
+        exc_wrapper = exc_info.value
+        assert exc_wrapper.exc_cls_name == "UnpickleableException"
+        assert exc_wrapper.exc_args == ("foo", )
+
     def test_max_retries_exceeded(self):
         self.retry_task.max_retries = 2
         self.retry_task.iterations = 0
@@ -521,25 +588,68 @@ class test_task_retries(TasksCase):
         self.autoretry_task.apply((1, 0))
         assert self.autoretry_task.iterations == 6
 
-    @patch('random.randrange', side_effect=lambda i: i - 1)
-    def test_autoretry_backoff(self, randrange):
-        task = self.autoretry_backoff_task
-        task.max_retries = 3
+    def test_autoretry_arith(self):
+        self.autoretry_arith_task.max_retries = 3
+        self.autoretry_arith_task.iterations = 0
+        self.autoretry_arith_task.apply((1, 0))
+        assert self.autoretry_arith_task.iterations == 1
+
+    @pytest.mark.parametrize(
+        'retry_backoff, expected_countdowns',
+        [
+            (False, [None, None, None, None]),
+            (0, [None, None, None, None]),
+            (0.0, [None, None, None, None]),
+            (True, [1, 2, 4, 8]),
+            (-1, [1, 2, 4, 8]),
+            (0.1, [1, 2, 4, 8]),
+            (1, [1, 2, 4, 8]),
+            (1.9, [1, 2, 4, 8]),
+            (2, [2, 4, 8, 16]),
+        ],
+    )
+    def test_autoretry_backoff(self, retry_backoff, expected_countdowns):
+        @self.app.task(bind=True, shared=False, autoretry_for=(ZeroDivisionError,),
+                       retry_backoff=retry_backoff, retry_jitter=False, max_retries=3)
+        def task(self_, x, y):
+            self_.iterations += 1
+            return x / y
+
         task.iterations = 0
 
         with patch.object(task, 'retry', wraps=task.retry) as fake_retry:
-            task.apply(("http://httpbin.org/error",))
+            task.apply((1, 0))
 
         assert task.iterations == 4
         retry_call_countdowns = [
-            call[1]['countdown'] for call in fake_retry.call_args_list
+            call_[1].get('countdown') for call_ in fake_retry.call_args_list
         ]
-        assert retry_call_countdowns == [1, 2, 4, 8]
+        assert retry_call_countdowns == expected_countdowns
 
+    @pytest.mark.parametrize(
+        'retry_backoff, expected_countdowns',
+        [
+            (False, [None, None, None, None]),
+            (0, [None, None, None, None]),
+            (0.0, [None, None, None, None]),
+            (True, [0, 1, 3, 7]),
+            (-1, [0, 1, 3, 7]),
+            (0.1, [0, 1, 3, 7]),
+            (1, [0, 1, 3, 7]),
+            (1.9, [0, 1, 3, 7]),
+            (2, [1, 3, 7, 15]),
+        ],
+    )
     @patch('random.randrange', side_effect=lambda i: i - 2)
-    def test_autoretry_backoff_jitter(self, randrange):
-        task = self.autoretry_backoff_jitter_task
-        task.max_retries = 3
+    def test_autoretry_backoff_jitter(self, randrange, retry_backoff, expected_countdowns):
+        @self.app.task(bind=True, shared=False, autoretry_for=(HTTPError,),
+                       retry_backoff=retry_backoff, retry_jitter=True, max_retries=3)
+        def task(self_, url):
+            self_.iterations += 1
+            if "error" in url:
+                fp = tempfile.TemporaryFile()
+                raise HTTPError(url, '500', 'Error', '', fp)
+
         task.iterations = 0
 
         with patch.object(task, 'retry', wraps=task.retry) as fake_retry:
@@ -547,9 +657,9 @@ class test_task_retries(TasksCase):
 
         assert task.iterations == 4
         retry_call_countdowns = [
-            call[1]['countdown'] for call in fake_retry.call_args_list
+            call_[1].get('countdown') for call_ in fake_retry.call_args_list
         ]
-        assert retry_call_countdowns == [0, 1, 3, 7]
+        assert retry_call_countdowns == expected_countdowns
 
     def test_autoretry_for_from_base(self):
         self.autoretry_for_from_base_task.iterations = 0
@@ -579,7 +689,7 @@ class test_task_retries(TasksCase):
 
         assert task.iterations == 6
         retry_call_countdowns = [
-            call[1]['countdown'] for call in fake_retry.call_args_list
+            call_[1]['countdown'] for call_ in fake_retry.call_args_list
         ]
         assert retry_call_countdowns == [1, 2, 4, 8, 16, 32]
 
@@ -598,7 +708,7 @@ class test_task_retries(TasksCase):
 
         assert task.iterations == 6
         retry_call_countdowns = [
-            call[1]['countdown'] for call in fake_retry.call_args_list
+            call_[1]['countdown'] for call_ in fake_retry.call_args_list
         ]
         assert retry_call_countdowns == [1, 2, 4, 8, 16, 32]
 
@@ -610,7 +720,7 @@ class test_task_retries(TasksCase):
 
         assert task.iterations == 6
         retry_call_countdowns = [
-            call[1]['countdown'] for call in fake_retry.call_args_list
+            call_[1]['countdown'] for call_ in fake_retry.call_args_list
         ]
         assert retry_call_countdowns == [1, 2, 4, 8, 16, 16]
 
@@ -622,7 +732,7 @@ class test_task_retries(TasksCase):
 
         assert task.iterations == 6
         retry_call_countdowns = [
-            call[1]['countdown'] for call in fake_retry.call_args_list
+            call_[1]['countdown'] for call_ in fake_retry.call_args_list
         ]
         assert retry_call_countdowns == [1, 2, 4, 8, 16, 32]
 
@@ -635,7 +745,7 @@ class test_task_retries(TasksCase):
 
         assert task.iterations == 6
         retry_call_countdowns = [
-            call[1]['countdown'] for call in fake_retry.call_args_list
+            call_[1]['countdown'] for call_ in fake_retry.call_args_list
         ]
         assert retry_call_countdowns == [0, 1, 3, 7, 15, 31]
 
@@ -649,12 +759,26 @@ class test_task_retries(TasksCase):
         self.autoretry_task.apply((1, 0))
         assert self.autoretry_task.iterations == 6
 
-    def test_autoretry_class_based_task(self):
+    @pytest.mark.parametrize(
+        'backoff_value, expected_countdowns',
+        [
+            (False, [None, None, None]),
+            (0, [None, None, None]),
+            (0.0, [None, None, None]),
+            (True, [1, 2, 4]),
+            (-1, [1, 2, 4]),
+            (0.1, [1, 2, 4]),
+            (1, [1, 2, 4]),
+            (1.9, [1, 2, 4]),
+            (2, [2, 4, 8]),
+        ],
+    )
+    def test_autoretry_class_based_task(self, backoff_value, expected_countdowns):
         class ClassBasedAutoRetryTask(Task):
             name = 'ClassBasedAutoRetryTask'
             autoretry_for = (ZeroDivisionError,)
-            retry_kwargs = {'max_retries': 5}
-            retry_backoff = True
+            retry_kwargs = {'max_retries': 2}
+            retry_backoff = backoff_value
             retry_backoff_max = 700
             retry_jitter = False
             iterations = 0
@@ -667,8 +791,15 @@ class test_task_retries(TasksCase):
         task = ClassBasedAutoRetryTask()
         self.app.tasks.register(task)
         task.iterations = 0
-        task.apply([1, 0])
-        assert task.iterations == 6
+
+        with patch.object(task, 'retry', wraps=task.retry) as fake_retry:
+            task.apply((1, 0))
+
+        assert task.iterations == 3
+        retry_call_countdowns = [
+            call_[1].get('countdown') for call_ in fake_retry.call_args_list
+        ]
+        assert retry_call_countdowns == expected_countdowns
 
 
 class test_canvas_utils(TasksCase):
@@ -716,43 +847,6 @@ class test_tasks(TasksCase):
             return 'fooxyz'
 
         @self.app.task(shadow_name=shadow_name)
-        def shadowed():
-            pass
-
-        old_send_task = self.app.send_task
-        self.app.send_task = Mock()
-
-        shadowed.delay()
-
-        self.app.send_task.assert_called_once_with(ANY, ANY, ANY,
-                                                   compression=ANY,
-                                                   delivery_mode=ANY,
-                                                   exchange=ANY,
-                                                   expires=ANY,
-                                                   immediate=ANY,
-                                                   link=ANY,
-                                                   link_error=ANY,
-                                                   mandatory=ANY,
-                                                   priority=ANY,
-                                                   producer=ANY,
-                                                   queue=ANY,
-                                                   result_cls=ANY,
-                                                   routing_key=ANY,
-                                                   serializer=ANY,
-                                                   soft_time_limit=ANY,
-                                                   task_id=ANY,
-                                                   task_type=ANY,
-                                                   time_limit=ANY,
-                                                   shadow='fooxyz',
-                                                   ignore_result=False)
-
-        self.app.send_task = old_send_task
-
-    def test_shadow_name_old_task_class(self):
-        def shadow_name(task, args, kwargs, options):
-            return 'fooxyz'
-
-        @self.app.task(base=OldTask, shadow_name=shadow_name)
         def shadowed():
             pass
 
@@ -860,20 +954,20 @@ class test_tasks(TasksCase):
         assert task_headers['id'] == presult.id
         assert task_headers['task'] == task_name
         if test_eta:
-            assert isinstance(task_headers.get('eta'), string_t)
-            to_datetime = parse_iso8601(task_headers.get('eta'))
+            assert isinstance(task_headers.get('eta'), str)
+            to_datetime = datetime.fromisoformat(task_headers.get('eta'))
             assert isinstance(to_datetime, datetime)
         if test_expires:
-            assert isinstance(task_headers.get('expires'), string_t)
-            to_datetime = parse_iso8601(task_headers.get('expires'))
+            assert isinstance(task_headers.get('expires'), str)
+            to_datetime = datetime.fromisoformat(task_headers.get('expires'))
             assert isinstance(to_datetime, datetime)
         properties = properties or {}
-        for arg_name, arg_value in items(properties):
+        for arg_name, arg_value in properties.items():
             assert task_properties.get(arg_name) == arg_value
         headers = headers or {}
-        for arg_name, arg_value in items(headers):
+        for arg_name, arg_value in headers.items():
             assert task_headers.get(arg_name) == arg_value
-        for arg_name, arg_value in items(kwargs):
+        for arg_name, arg_value in kwargs.items():
             assert task_kwargs.get(arg_name) == arg_value
 
     def test_incomplete_task_cls(self):
@@ -927,7 +1021,7 @@ class test_tasks(TasksCase):
                 consumer, sresult, self.mytask.name, name='Elaine M. Benes',
             )
 
-            # With ETA.
+            # With ETA, absolute expires.
             presult2 = self.mytask.apply_async(
                 kwargs={'name': 'George Costanza'},
                 eta=self.now() + timedelta(days=1),
@@ -938,9 +1032,53 @@ class test_tasks(TasksCase):
                 name='George Costanza', test_eta=True, test_expires=True,
             )
 
+            # With ETA, absolute expires without timezone.
+            presult2 = self.mytask.apply_async(
+                kwargs={'name': 'George Constanza'},
+                eta=self.now() + timedelta(days=1),
+                expires=(self.now() + timedelta(hours=2)).replace(tzinfo=None),
+            )
+            self.assert_next_task_data_equal(
+                consumer, presult2, self.mytask.name,
+                name='George Constanza', test_eta=True, test_expires=True,
+            )
+
+            # With ETA, absolute expires in the past.
+            presult2 = self.mytask.apply_async(
+                kwargs={'name': 'George Costanza'},
+                eta=self.now() + timedelta(days=1),
+                expires=self.now() - timedelta(days=2),
+            )
+            self.assert_next_task_data_equal(
+                consumer, presult2, self.mytask.name,
+                name='George Costanza', test_eta=True, test_expires=True,
+            )
+
+            # With ETA, relative expires.
+            presult2 = self.mytask.apply_async(
+                kwargs={'name': 'George Costanza'},
+                eta=self.now() + timedelta(days=1),
+                expires=2 * 24 * 60 * 60,
+            )
+            self.assert_next_task_data_equal(
+                consumer, presult2, self.mytask.name,
+                name='George Costanza', test_eta=True, test_expires=True,
+            )
+
             # With countdown.
             presult2 = self.mytask.apply_async(
                 kwargs={'name': 'George Costanza'}, countdown=10, expires=12,
+            )
+            self.assert_next_task_data_equal(
+                consumer, presult2, self.mytask.name,
+                name='George Costanza', test_eta=True, test_expires=True,
+            )
+
+            # With ETA, absolute expires in the past in ISO format.
+            presult2 = self.mytask.apply_async(
+                kwargs={'name': 'George Costanza'},
+                eta=self.now() + timedelta(days=1),
+                expires=self.now() - timedelta(days=2),
             )
             self.assert_next_task_data_equal(
                 consumer, presult2, self.mytask.name,
@@ -988,11 +1126,36 @@ class test_tasks(TasksCase):
             'task-foo', uuid='fb', id=3122,
             retry=True, retry_policy=self.app.conf.task_publish_retry_policy)
 
+    @pytest.mark.usefixtures('depends_on_current_app')
+    def test_on_replace(self):
+        class CustomStampingVisitor(StampingVisitor):
+            def on_signature(self, sig, **headers) -> dict:
+                return {'header': 'value'}
+
+        class MyTask(Task):
+            def on_replace(self, sig):
+                sig.stamp(CustomStampingVisitor())
+                return super().on_replace(sig)
+
+        mytask = self.app.task(shared=False, base=MyTask)(return_True)
+
+        sig1 = signature('sig1')
+        with pytest.raises(Ignore):
+            mytask.replace(sig1)
+        assert sig1.options['header'] == 'value'
+
     def test_replace(self):
-        sig1 = Mock(name='sig1')
+        sig1 = MagicMock(name='sig1')
         sig1.options = {}
+        self.mytask.request.id = sentinel.request_id
         with pytest.raises(Ignore):
             self.mytask.replace(sig1)
+        sig1.freeze.assert_called_once_with(self.mytask.request.id)
+        sig1.set.assert_called_once_with(replaced_task_nesting=1,
+                                         chord=ANY,
+                                         group_id=ANY,
+                                         group_index=ANY,
+                                         root_id=ANY)
 
     def test_replace_with_chord(self):
         sig1 = Mock(name='sig1')
@@ -1000,7 +1163,6 @@ class test_tasks(TasksCase):
         with pytest.raises(ImproperlyConfigured):
             self.mytask.replace(sig1)
 
-    @pytest.mark.usefixtures('depends_on_current_app')
     def test_replace_callback(self):
         c = group([self.mytask.s()], app=self.app)
         c.freeze = Mock(name='freeze')
@@ -1008,29 +1170,23 @@ class test_tasks(TasksCase):
         self.mytask.request.id = 'id'
         self.mytask.request.group = 'group'
         self.mytask.request.root_id = 'root_id'
-        self.mytask.request.callbacks = 'callbacks'
-        self.mytask.request.errbacks = 'errbacks'
+        self.mytask.request.callbacks = callbacks = 'callbacks'
+        self.mytask.request.errbacks = errbacks = 'errbacks'
 
-        class JsonMagicMock(MagicMock):
-            parent = None
-
-            def __json__(self):
-                return 'whatever'
-
-            def reprcall(self, *args, **kwargs):
-                return 'whatever2'
-
-        mocked_signature = JsonMagicMock(name='s')
-        accumulate_mock = JsonMagicMock(name='accumulate', s=mocked_signature)
-        self.mytask.app.tasks['celery.accumulate'] = accumulate_mock
-
-        try:
-            self.mytask.replace(c)
-        except Ignore:
-            mocked_signature.return_value.set.assert_called_with(
-                link='callbacks',
-                link_error='errbacks',
-            )
+        # Replacement groups get uplifted to chords so that we can accumulate
+        # the results and link call/errbacks - patch the appropriate `chord`
+        # methods so we can validate this behaviour
+        with patch(
+            "celery.canvas.chord.link"
+        ) as mock_chord_link, patch(
+            "celery.canvas.chord.link_error"
+        ) as mock_chord_link_error:
+            with pytest.raises(Ignore):
+                self.mytask.replace(c)
+        # Confirm that the call/errbacks on the original signature are linked
+        # to the replacement signature as expected
+        mock_chord_link.assert_called_once_with(callbacks)
+        mock_chord_link_error.assert_called_once_with(errbacks)
 
     def test_replace_group(self):
         c = group([self.mytask.s()], app=self.app)
@@ -1039,6 +1195,15 @@ class test_tasks(TasksCase):
         self.mytask.request.id = 'id'
         self.mytask.request.group = 'group'
         self.mytask.request.root_id = 'root_id',
+        with pytest.raises(Ignore):
+            self.mytask.replace(c)
+
+    def test_replace_chain(self):
+        c = chain([self.mytask.si(), self.mytask.si()], app=self.app)
+        c.freeze = Mock(name='freeze')
+        c.delay = Mock(name='delay')
+        self.mytask.request.id = 'id'
+        self.mytask.request.chain = c
         with pytest.raises(Ignore):
             self.mytask.replace(c)
 
@@ -1276,6 +1441,7 @@ class test_apply_task(TasksCase):
 
         assert e.successful()
         assert e.ready()
+        assert e.name == 't.unit.tasks.test_tasks.increment_counter'
         assert repr(e).startswith('<EagerResult:')
 
         f = self.raising.apply()
@@ -1284,6 +1450,44 @@ class test_apply_task(TasksCase):
         assert f.traceback
         with pytest.raises(KeyError):
             f.get()
+
+    def test_apply_eager_populates_request_task(self):
+        task_to_apply = self.task_check_request_context
+        with patch.object(
+            task_to_apply.request_stack, "push",
+            wraps=task_to_apply.request_stack.push,
+        ) as mock_push:
+            task_to_apply.apply()
+
+        mock_push.assert_called_once()
+
+        request = mock_push.call_args[0][0]
+
+        assert request.is_eager is True
+        assert request.task == 't.unit.tasks.test_tasks.task_check_request_context'
+
+    def test_apply_simulates_delivery_info(self):
+        task_to_apply = self.task_check_request_context
+        with patch.object(
+            task_to_apply.request_stack, "push",
+            wraps=task_to_apply.request_stack.push,
+        ) as mock_push:
+            task_to_apply.apply(
+                priority=4,
+                routing_key='myroutingkey',
+                exchange='myexchange',
+            )
+
+        mock_push.assert_called_once()
+
+        request = mock_push.call_args[0][0]
+
+        assert request.delivery_info == {
+            'is_eager': True,
+            'exchange': 'myexchange',
+            'routing_key': 'myroutingkey',
+            'priority': 4,
+        }
 
 
 class test_apply_async(TasksCase):

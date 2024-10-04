@@ -40,7 +40,7 @@ The Code of Conduct is heavily based on the `Ubuntu Code of Conduct`_, and
 the `Pylons Code of Conduct`_.
 
 .. _`Ubuntu Code of Conduct`: https://www.ubuntu.com/community/conduct
-.. _`Pylons Code of Conduct`: http://docs.pylonshq.com/community/conduct.html
+.. _`Pylons Code of Conduct`: https://pylonsproject.org/community-code-of-conduct.html
 
 Be considerate
 --------------
@@ -256,6 +256,7 @@ issue tracker.
 * :pypi:`kombu`: https://github.com/celery/kombu/issues
 * :pypi:`amqp`: https://github.com/celery/py-amqp/issues
 * :pypi:`vine`: https://github.com/celery/vine/issues
+* :pypi:`pytest-celery`: https://github.com/celery/pytest-celery/issues
 * :pypi:`librabbitmq`: https://github.com/celery/librabbitmq/issues
 * :pypi:`django-celery-beat`: https://github.com/celery/django-celery-beat/issues
 * :pypi:`django-celery-results`: https://github.com/celery/django-celery-results/issues
@@ -291,14 +292,13 @@ Branches
 
 Current active version branches:
 
-* dev (which git calls "master") (https://github.com/celery/celery/tree/master)
-* 4.2 (https://github.com/celery/celery/tree/4.2)
-* 4.1 (https://github.com/celery/celery/tree/4.1)
+* dev (which git calls "main") (https://github.com/celery/celery/tree/main)
+* 4.5 (https://github.com/celery/celery/tree/v4.5)
 * 3.1 (https://github.com/celery/celery/tree/3.1)
 
 You can see the state of any branch by looking at the Changelog:
 
-    https://github.com/celery/celery/blob/master/Changelog
+    https://github.com/celery/celery/blob/main/Changelog.rst
 
 If the branch is in active development the topmost version info should
 contain meta-data like:
@@ -309,7 +309,7 @@ contain meta-data like:
     ======
     :release-date: TBA
     :status: DEVELOPMENT
-    :branch: dev (git calls this master)
+    :branch: dev (git calls this main)
 
 The ``status`` field can be one of:
 
@@ -331,7 +331,7 @@ The ``status`` field can be one of:
 dev branch
 ----------
 
-The dev branch (called "master" by git), is where development of the next
+The dev branch (called "main" by git), is where development of the next
 version happens.
 
 Maintenance branches
@@ -345,7 +345,7 @@ Previously these were named ``releaseXX-maint``.
 The versions we currently maintain is:
 
 * 4.2
- 
+
   This is the current series.
 
 * 4.1
@@ -423,7 +423,7 @@ to upstream changes:
 .. code-block:: console
 
     $ cd celery
-    $ git remote add upstream git://github.com/celery/celery.git
+    $ git remote add upstream git@github.com:celery/celery.git
     $ git fetch upstream
 
 If you need to pull in new changes from upstream you should
@@ -431,23 +431,23 @@ always use the ``--rebase`` option to ``git pull``:
 
 .. code-block:: console
 
-    git pull --rebase upstream master
+    git pull --rebase upstream main
 
 With this option, you don't clutter the history with merging
 commit notes. See `Rebasing merge commits in git`_.
 If you want to learn more about rebasing, see the `Rebase`_
 section in the GitHub guides.
 
-If you need to work on a different branch than the one git calls ``master``, you can
+If you need to work on a different branch than the one git calls ``main``, you can
 fetch and checkout a remote branch like this::
 
     git checkout --track -b 5.0-devel upstream/5.0-devel
 
-**Note:** Any feature or fix branch should be created from ``upstream/master``.
+**Note:** Any feature or fix branch should be created from ``upstream/main``.
 
 .. _`Fork a Repo`: https://help.github.com/fork-a-repo/
 .. _`Rebasing merge commits in git`:
-    https://notes.envato.com/developers/rebasing-merge-commits-in-git/
+    https://web.archive.org/web/20150627054345/http://marketblog.envato.com/general/rebasing-merge-commits-in-git/
 .. _`Rebase`: https://help.github.com/rebase/
 
 .. _contributing-docker-development:
@@ -494,19 +494,19 @@ Some useful commands to run:
     **Note:** This command will run tests for every environment defined in :file:`tox.ini`.
     It takes a while.
 
-* ``pyenv exec python{2.7,3.5,3.6,3.7,3.8} -m pytest t/unit``
+* ``pyenv exec python{3.6,3.7,3.8,3.9} -m pytest t/unit``
 
     To run unit tests using pytest.
 
-    **Note:** ``{2.7,3.5,3.6,3.7,3.8}`` means you can use any of those options.
-    e.g. ``pyenv exec python3.6 -m pytest t/unit``
+    **Note:** ``{3.6,3.7,3.8,3.9}`` means you can use any of those options.
+    e.g. ``pyenv exec python3.7 -m pytest t/unit``
 
-* ``pyenv exec python{2.7,3.5,3.6,3.7,3.8} -m pytest t/integration``
+* ``pyenv exec python{3.6,3.7,3.8,3.9} -m pytest t/integration``
 
     To run integration tests using pytest
 
-    **Note:** ``{2.7,3.5,3.6,3.7,3.8}`` means you can use any of those options.
-    e.g. ``pyenv exec python3.6 -m pytest t/unit``
+    **Note:** ``{3.6,3.7,3.8,3.9}`` means you can use any of those options.
+    e.g. ``pyenv exec python3.7 -m pytest t/unit``
 
 By default, docker-compose will mount the Celery and test folders in the Docker
 container, allowing code changes and testing to be immediately visible inside
@@ -516,7 +516,7 @@ use are also defined in the :file:`docker/docker-compose.yml` file.
 By running ``docker-compose build celery`` an image will be created with the
 name ``celery/celery:dev``. This docker image has every dependency needed
 for development installed. ``pyenv`` is used to install multiple python
-versions, the docker image offers python 2.7, 3.5, 3.6, 3.7 and 3.8.
+versions, the docker image offers python 3.6, 3.7, 3.8 and 3.9.
 The default python version is set to 3.8.
 
 The :file:`docker-compose.yml` file defines the necessary environment variables
@@ -536,7 +536,7 @@ Assuming a folder structure such as:
 
     + celery_project
       + celery # repository cloned here.
-      + my_project 
+      + my_project
         - manage.py
         + my_project
           - views.py
@@ -592,14 +592,14 @@ To run the Celery test suite you need to install
     $ pip install -U -r requirements/default.txt
 
 After installing the dependencies required, you can now execute
-the test suite by calling :pypi:`py.test <pytest>`:
+the test suite by calling :pypi:`pytest <pytest>`:
 
 .. code-block:: console
 
-    $ py.test t/unit
-    $ py.test t/integration
+    $ pytest t/unit
+    $ pytest t/integration
 
-Some useful options to :command:`py.test` are:
+Some useful options to :command:`pytest` are:
 
 * ``-x``
 
@@ -618,7 +618,7 @@ you can do so like this:
 
 .. code-block:: console
 
-    $ py.test t/unit/worker/test_worker.py
+    $ pytest t/unit/worker/test_worker.py
 
 .. _contributing-coverage:
 
@@ -636,11 +636,11 @@ Installing the :pypi:`pytest-cov` module:
 Code coverage in HTML format
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-#. Run :command:`py.test` with the ``--cov-report=html`` argument enabled:
+#. Run :command:`pytest` with the ``--cov-report=html`` argument enabled:
 
     .. code-block:: console
 
-        $ py.test --cov=celery --cov-report=html
+        $ pytest --cov=celery --cov-report=html
 
 #. The coverage output will then be located in the :file:`htmlcov/` directory:
 
@@ -651,11 +651,11 @@ Code coverage in HTML format
 Code coverage in XML (Cobertura-style)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-#. Run :command:`py.test` with the ``--cov-report=xml`` argument enabled:
+#. Run :command:`pytest` with the ``--cov-report=xml`` argument enabled:
 
 .. code-block:: console
 
-    $ py.test --cov=celery --cov-report=xml
+    $ pytest --cov=celery --cov-report=xml
 
 #. The coverage XML output will then be located in the :file:`coverage.xml` file.
 
@@ -677,7 +677,7 @@ Use the ``tox -e`` option if you only want to test specific Python versions:
 
 .. code-block:: console
 
-    $ tox -e 2.7
+    $ tox -e 3.7
 
 Building the documentation
 --------------------------
@@ -710,6 +710,20 @@ Make sure there are no errors or warnings in the build output.
 After building succeeds, the documentation is available at :file:`_build/html`.
 
 .. _contributing-verify:
+
+Build the documentation using Docker
+------------------------------------
+
+Build the documentation by running:
+
+.. code-block:: console
+
+    $ docker-compose -f docker/docker-compose.yml up --build docs
+
+The service will start a local docs server at ``:7000``. The server is using
+``sphinx-autobuild`` with the ``--watch`` option enabled, so you can live
+edit the documentation. Check the additional options and configs in
+:file:`docker/docker-compose.yml`
 
 Verifying your contribution
 ---------------------------
@@ -812,7 +826,7 @@ had to be modified.
 
 .. _`Isort`: https://isort.readthedocs.io/en/latest/
 
-.. _contributing-pull-requets:
+.. _contributing-pull-requests:
 
 Creating pull requests
 ----------------------
@@ -828,26 +842,16 @@ make it easier for the maintainers to accept your proposed changes:
       ``Needs Test Coverage``.
 
 - [ ] Make sure unit test coverage does not decrease.
-      ``py.test -xv --cov=celery --cov-report=xml --cov-report term``.
+      ``pytest -xv --cov=celery --cov-report=xml --cov-report term``.
       You can check the current test coverage here: https://codecov.io/gh/celery/celery
 
-- [ ] Run ``flake8`` against the code. The following commands are valid
+- [ ] Run ``pre-commit`` against the code. The following commands are valid
       and equivalent.:
 
       .. code-block:: console
 
-          $ flake8 -j 2 celery/ t/
-          $ make flakecheck
-          $ tox -e flake8
-
-- [ ] Run ``flakeplus`` against the code. The following commands are valid
-      and equivalent.:
-
-      .. code-block:: console
-
-          $ flakeplus --2.7 celery/ t/
-          $ make flakes
-          $ tox -e flakeplus
+          $ pre-commit run --all-files
+          $ tox -e lint
 
 - [ ]  Build api docs to make sure everything is OK. The following commands are valid
       and equivalent.:
@@ -950,8 +954,8 @@ Here is a summary of such statuses:
 
 - **Status: Needs Rebase**
 
-  The PR has not been rebased with ``master``. It is very important to rebase
-  PRs before they can be merged to ``master`` to solve any merge conflicts.
+  The PR has not been rebased with ``main``. It is very important to rebase
+  PRs before they can be merged to ``main`` to solve any merge conflicts.
 
 - **Status: Needs Test Coverage**
 
@@ -1076,7 +1080,6 @@ is following the conventions.
         from Queue import Queue, Empty
 
         from .platforms import Pidfile
-        from .five import zip_longest, items, range
         from .utils.time import maybe_timedelta
 
 * Wild-card imports must not be used (`from xxx import *`).
@@ -1168,7 +1171,7 @@ that require third-party libraries must be added.
 
     .. code-block:: console
 
-        $ pip install -U requirements/pkgutils.txt
+        $ pip install -U -r requirements/pkgutils.txt
         $ make readme
 
 
@@ -1243,6 +1246,11 @@ Josue Balandrano Coronel
 :github: https://github.com/xirdneh
 :twitter: https://twitter.com/eusoj_xirdneh
 
+Tomer Nosrati
+~~~~~~~~~~~~~
+:github: https://github.com/Nusnus
+:twitter: https://x.com/tomer_nosrati
+
 Website
 -------
 
@@ -1275,7 +1283,7 @@ Packages
 :CI: https://travis-ci.org/#!/celery/celery
 :Windows-CI: https://ci.appveyor.com/project/ask/celery
 :PyPI: :pypi:`celery`
-:docs: http://docs.celeryproject.org
+:docs: https://docs.celeryq.dev
 
 ``kombu``
 ---------
@@ -1309,6 +1317,15 @@ Promise/deferred implementation.
 :Windows-CI: https://ci.appveyor.com/project/ask/vine
 :PyPI: :pypi:`vine`
 :docs: https://vine.readthedocs.io
+
+``pytest-celery``
+-----------------
+
+Pytest plugin for Celery.
+
+:git: https://github.com/celery/pytest-celery
+:PyPI: :pypi:`pytest-celery`
+:docs: https://pytest-celery.readthedocs.io
 
 ``billiard``
 ------------
@@ -1374,7 +1391,7 @@ Deprecated
 
 :git: https://github.com/celery/django-celery
 :PyPI: :pypi:`django-celery`
-:docs: http://docs.celeryproject.org/en/latest/django
+:docs: https://docs.celeryq.dev/en/latest/django
 
 - ``Flask-Celery``
 
@@ -1485,11 +1502,11 @@ following:
 
 .. _`mailing-list`: https://groups.google.com/group/celery-users
 
-.. _`irc-channel`: http://docs.celeryproject.org/en/latest/getting-started/resources.html#irc
+.. _`irc-channel`: https://docs.celeryq.dev/en/latest/getting-started/resources.html#irc
 
-.. _`internals-guide`: http://docs.celeryproject.org/en/latest/internals/guide.html
+.. _`internals-guide`: https://docs.celeryq.dev/en/latest/internals/guide.html
 
-.. _`bundles`: http://docs.celeryproject.org/en/latest/getting-started/introduction.html#bundles
+.. _`bundles`: https://docs.celeryq.dev/en/latest/getting-started/introduction.html#bundles
 
-.. _`report an issue`: http://docs.celeryproject.org/en/latest/contributing.html#reporting-bugs
+.. _`report an issue`: https://docs.celeryq.dev/en/latest/contributing.html#reporting-bugs
 

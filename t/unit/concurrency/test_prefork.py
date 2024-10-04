@@ -1,29 +1,27 @@
-from __future__ import absolute_import, unicode_literals
-
 import errno
 import os
 import socket
 from itertools import cycle
+from unittest.mock import Mock, patch
 
 import pytest
-from case import Mock, mock, patch, skip
 
+import t.skip
 from celery.app.defaults import DEFAULTS
 from celery.concurrency.asynpool import iterate_file_descriptors_safely
-from celery.five import range
 from celery.utils.collections import AttributeDict
 from celery.utils.functional import noop
 from celery.utils.objects import Bunch
 
 try:
-    from celery.concurrency import prefork as mp
     from celery.concurrency import asynpool
+    from celery.concurrency import prefork as mp
 except ImportError:
 
-    class _mp(object):
+    class _mp:
         RUN = 0x1
 
-        class TaskPool(object):
+        class TaskPool:
             _pool = Mock()
 
             def __init__(self, *args, **kwargs):
@@ -37,11 +35,11 @@ except ImportError:
 
             def apply_async(self, *args, **kwargs):
                 pass
-    mp = _mp()  # noqa
-    asynpool = None  # noqa
+    mp = _mp()
+    asynpool = None
 
 
-class MockResult(object):
+class MockResult:
 
     def __init__(self, value, pid):
         self.value = value
@@ -54,52 +52,62 @@ class MockResult(object):
         return self.value
 
 
+@patch('celery.platforms.set_mp_process_title')
 class test_process_initializer:
 
+    @staticmethod
+    def Loader(*args, **kwargs):
+        loader = Mock(*args, **kwargs)
+        loader.conf = {}
+        loader.override_backends = {}
+        return loader
+
     @patch('celery.platforms.signals')
-    @patch('celery.platforms.set_mp_process_title')
-    def test_process_initializer(self, set_mp_process_title, _signals):
-        with mock.restore_logging():
-            from celery import signals
-            from celery._state import _tls
-            from celery.concurrency.prefork import (
-                process_initializer, WORKER_SIGRESET, WORKER_SIGIGNORE,
+    def test_process_initializer(self, _signals, set_mp_process_title, restore_logging):
+        from celery import signals
+        from celery._state import _tls
+        from celery.concurrency.prefork import WORKER_SIGIGNORE, WORKER_SIGRESET, process_initializer
+        on_worker_process_init = Mock()
+        signals.worker_process_init.connect(on_worker_process_init)
+
+        with self.Celery(loader=self.Loader) as app:
+            app.conf = AttributeDict(DEFAULTS)
+            process_initializer(app, 'awesome.worker.com')
+            _signals.ignore.assert_any_call(*WORKER_SIGIGNORE)
+            _signals.reset.assert_any_call(*WORKER_SIGRESET)
+            assert app.loader.init_worker.call_count
+            on_worker_process_init.assert_called()
+            assert _tls.current_app is app
+            set_mp_process_title.assert_called_with(
+                'celeryd', hostname='awesome.worker.com',
             )
-            on_worker_process_init = Mock()
-            signals.worker_process_init.connect(on_worker_process_init)
 
-            def Loader(*args, **kwargs):
-                loader = Mock(*args, **kwargs)
-                loader.conf = {}
-                loader.override_backends = {}
-                return loader
-
-            with self.Celery(loader=Loader) as app:
-                app.conf = AttributeDict(DEFAULTS)
-                process_initializer(app, 'awesome.worker.com')
-                _signals.ignore.assert_any_call(*WORKER_SIGIGNORE)
-                _signals.reset.assert_any_call(*WORKER_SIGRESET)
-                assert app.loader.init_worker.call_count
-                on_worker_process_init.assert_called()
-                assert _tls.current_app is app
-                set_mp_process_title.assert_called_with(
-                    'celeryd', hostname='awesome.worker.com',
-                )
-
-                with patch('celery.app.trace.setup_worker_optimizations') as S:
-                    os.environ['FORKED_BY_MULTIPROCESSING'] = '1'
-                    try:
-                        process_initializer(app, 'luke.worker.com')
-                        S.assert_called_with(app, 'luke.worker.com')
-                    finally:
-                        os.environ.pop('FORKED_BY_MULTIPROCESSING', None)
-
-                os.environ['CELERY_LOG_FILE'] = 'worker%I.log'
-                app.log.setup = Mock(name='log_setup')
+            with patch('celery.app.trace.setup_worker_optimizations') as S:
+                os.environ['FORKED_BY_MULTIPROCESSING'] = '1'
                 try:
                     process_initializer(app, 'luke.worker.com')
+                    S.assert_called_with(app, 'luke.worker.com')
                 finally:
-                    os.environ.pop('CELERY_LOG_FILE', None)
+                    os.environ.pop('FORKED_BY_MULTIPROCESSING', None)
+
+            os.environ['CELERY_LOG_FILE'] = 'worker%I.log'
+            app.log.setup = Mock(name='log_setup')
+            try:
+                process_initializer(app, 'luke.worker.com')
+            finally:
+                os.environ.pop('CELERY_LOG_FILE', None)
+
+    @patch('celery.platforms.set_pdeathsig')
+    def test_pdeath_sig(self, _set_pdeathsig, set_mp_process_title, restore_logging):
+        from celery import signals
+        on_worker_process_init = Mock()
+        signals.worker_process_init.connect(on_worker_process_init)
+        from celery.concurrency.prefork import process_initializer
+
+        with self.Celery(loader=self.Loader) as app:
+            app.conf = AttributeDict(DEFAULTS)
+            process_initializer(app, 'awesome.worker.com')
+        _set_pdeathsig.assert_called_once_with('SIGKILL')
 
 
 class test_process_destructor:
@@ -112,7 +120,7 @@ class test_process_destructor:
         )
 
 
-class MockPool(object):
+class MockPool:
     started = False
     closed = False
     joined = False
@@ -183,20 +191,34 @@ class ExeMockTaskPool(mp.TaskPool):
     Pool = BlockingPool = ExeMockPool
 
 
-@skip.if_win32()
-@skip.unless_module('multiprocessing')
+@t.skip.if_win32
 class test_AsynPool:
+
+    def setup_method(self):
+        pytest.importorskip('multiprocessing')
 
     def test_gen_not_started(self):
 
         def gen():
             yield 1
+            assert not asynpool.gen_not_started(g)
             yield 2
         g = gen()
         assert asynpool.gen_not_started(g)
         next(g)
         assert not asynpool.gen_not_started(g)
         list(g)
+        assert not asynpool.gen_not_started(g)
+
+        def gen2():
+            yield 1
+            raise RuntimeError('generator error')
+        g = gen2()
+        assert asynpool.gen_not_started(g)
+        next(g)
+        assert not asynpool.gen_not_started(g)
+        with pytest.raises(RuntimeError):
+            next(g)
         assert not asynpool.gen_not_started(g)
 
     @patch('select.select', create=True)
@@ -332,10 +354,35 @@ class test_AsynPool:
         # Then: all items were removed from the managed data source
         assert fd_iter == {}, "Expected all items removed from managed dict"
 
+    def test_register_with_event_loop__no_on_tick_dupes(self):
+        """Ensure AsynPool's register_with_event_loop only registers
+        on_poll_start in the event loop the first time it's called. This
+        prevents a leak when the Consumer is restarted.
+        """
+        pool = asynpool.AsynPool(threads=False)
+        hub = Mock(name='hub')
+        pool.register_with_event_loop(hub)
+        pool.register_with_event_loop(hub)
+        hub.on_tick.add.assert_called_once()
 
-@skip.if_win32()
-@skip.unless_module('multiprocessing')
+    @patch('billiard.pool.Pool._create_worker_process')
+    def test_before_create_process_signal(self, create_process):
+        from celery import signals
+        on_worker_before_create_process = Mock()
+        signals.worker_before_create_process.connect(on_worker_before_create_process)
+        pool = asynpool.AsynPool(processes=1, threads=False)
+        create_process.assert_called_once_with(0)
+        on_worker_before_create_process.assert_any_call(
+            signal=signals.worker_before_create_process,
+            sender=pool,
+        )
+
+
+@t.skip.if_win32
 class test_ResultHandler:
+
+    def setup_method(self):
+        pytest.importorskip('multiprocessing')
 
     def test_process_result(self):
         x = asynpool.ResultHandler(
@@ -432,7 +479,7 @@ class test_TaskPool:
         pool = TaskPool(10)
         procs = [Bunch(pid=i) for i in range(pool.limit)]
 
-        class _Pool(object):
+        class _Pool:
             _pool = procs
             _maxtasksperchild = None
             timeout = 10

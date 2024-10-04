@@ -1,8 +1,5 @@
-# -*- coding: utf-8 -*-
 """MongoDB result store backend."""
-from __future__ import absolute_import, unicode_literals
-
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from kombu.exceptions import EncodeError
 from kombu.utils.objects import cached_property
@@ -10,25 +7,24 @@ from kombu.utils.url import maybe_sanitize_url, urlparse
 
 from celery import states
 from celery.exceptions import ImproperlyConfigured
-from celery.five import items, string_t
 
 from .base import BaseBackend
 
 try:
     import pymongo
-except ImportError:  # pragma: no cover
-    pymongo = None   # noqa
+except ImportError:
+    pymongo = None
 
 if pymongo:
     try:
         from bson.binary import Binary
-    except ImportError:                     # pragma: no cover
-        from pymongo.binary import Binary   # noqa
-    from pymongo.errors import InvalidDocument  # noqa
+    except ImportError:
+        from pymongo.binary import Binary
+    from pymongo.errors import InvalidDocument
 else:                                       # pragma: no cover
-    Binary = None                           # noqa
+    Binary = None
 
-    class InvalidDocument(Exception):       # noqa
+    class InvalidDocument(Exception):
         pass
 
 __all__ = ('MongoBackend',)
@@ -62,7 +58,7 @@ class MongoBackend(BaseBackend):
     def __init__(self, app=None, **kwargs):
         self.options = {}
 
-        super(MongoBackend, self).__init__(app, **kwargs)
+        super().__init__(app, **kwargs)
 
         if not pymongo:
             raise ImproperlyConfigured(
@@ -70,7 +66,7 @@ class MongoBackend(BaseBackend):
                 'MongoDB backend.')
 
         # Set option defaults
-        for key, value in items(self._prepare_client_options()):
+        for key, value in self._prepare_client_options().items():
             self.options.setdefault(key, value)
 
         # update conf with mongo uri data, only if uri was given
@@ -80,7 +76,7 @@ class MongoBackend(BaseBackend):
             uri_data = pymongo.uri_parser.parse_uri(self.url)
             # build the hosts list to create a mongo connection
             hostslist = [
-                '{0}:{1}'.format(x[0], x[1]) for x in uri_data['nodelist']
+                f'{x[0]}:{x[1]}' for x in uri_data['nodelist']
             ]
             self.user = uri_data['username']
             self.password = uri_data['password']
@@ -123,7 +119,7 @@ class MongoBackend(BaseBackend):
     def _ensure_mongodb_uri_compliance(url):
         parsed_url = urlparse(url)
         if not parsed_url.scheme.startswith('mongodb'):
-            url = 'mongodb+{}'.format(url)
+            url = f'mongodb+{url}'
 
         if url == 'mongodb://':
             url += 'localhost'
@@ -151,9 +147,9 @@ class MongoBackend(BaseBackend):
                 # This enables the use of replica sets and sharding.
                 # See pymongo.Connection() for more info.
                 host = self.host
-                if isinstance(host, string_t) \
+                if isinstance(host, str) \
                    and not host.startswith('mongodb://'):
-                    host = 'mongodb://{0}:{1}'.format(host, self.port)
+                    host = f'mongodb://{host}:{self.port}'
             # don't change self.options
             conf = dict(self.options)
             conf['host'] = host
@@ -170,7 +166,7 @@ class MongoBackend(BaseBackend):
         if self.serializer == 'bson':
             # mongodb handles serialization
             return data
-        payload = super(MongoBackend, self).encode(data)
+        payload = super().encode(data)
 
         # serializer which are in a unsupported format (pickle/binary)
         if self.serializer in BINARY_CODECS:
@@ -180,13 +176,14 @@ class MongoBackend(BaseBackend):
     def decode(self, data):
         if self.serializer == 'bson':
             return data
-        return super(MongoBackend, self).decode(data)
+        return super().decode(data)
 
     def _store_result(self, task_id, result, state,
                       traceback=None, request=None, **kwargs):
         """Store return value and state of an executed task."""
         meta = self._get_result_meta(result=self.encode(result), state=state,
-                                     traceback=traceback, request=request)
+                                     traceback=traceback, request=request,
+                                     format_date=False)
         # Add the _id for mongodb
         meta['_id'] = task_id
 
@@ -201,13 +198,28 @@ class MongoBackend(BaseBackend):
         """Get task meta-data for a task by id."""
         obj = self.collection.find_one({'_id': task_id})
         if obj:
+            if self.app.conf.find_value_for_key('extended', 'result'):
+                return self.meta_from_decoded({
+                    'name': obj['name'],
+                    'args': obj['args'],
+                    'task_id': obj['_id'],
+                    'queue': obj['queue'],
+                    'kwargs': obj['kwargs'],
+                    'status': obj['status'],
+                    'worker': obj['worker'],
+                    'retries': obj['retries'],
+                    'children': obj['children'],
+                    'date_done': obj['date_done'],
+                    'traceback': obj['traceback'],
+                    'result': self.decode(obj['result']),
+                })
             return self.meta_from_decoded({
                 'task_id': obj['_id'],
                 'status': obj['status'],
                 'result': self.decode(obj['result']),
                 'date_done': obj['date_done'],
-                'traceback': self.decode(obj['traceback']),
-                'children': self.decode(obj['children']),
+                'traceback': obj['traceback'],
+                'children': obj['children'],
             })
         return {'status': states.PENDING, 'result': None}
 
@@ -216,7 +228,7 @@ class MongoBackend(BaseBackend):
         meta = {
             '_id': group_id,
             'result': self.encode([i.id for i in result]),
-            'date_done': datetime.utcnow(),
+            'date_done': datetime.now(timezone.utc),
         }
         self.group_collection.replace_one({'_id': group_id}, meta, upsert=True)
         return result
@@ -252,6 +264,9 @@ class MongoBackend(BaseBackend):
 
     def cleanup(self):
         """Delete expired meta-data."""
+        if not self.expires:
+            return
+
         self.collection.delete_many(
             {'date_done': {'$lt': self.app.now() - self.expires_delta}},
         )
@@ -261,21 +276,12 @@ class MongoBackend(BaseBackend):
 
     def __reduce__(self, args=(), kwargs=None):
         kwargs = {} if not kwargs else kwargs
-        return super(MongoBackend, self).__reduce__(
+        return super().__reduce__(
             args, dict(kwargs, expires=self.expires, url=self.url))
 
     def _get_database(self):
         conn = self._get_connection()
-        db = conn[self.database_name]
-        if self.user and self.password:
-            source = self.options.get(
-                'authsource',
-                self.database_name or 'admin'
-            )
-            if not db.authenticate(self.user, self.password, source=source):
-                raise ImproperlyConfigured(
-                    'Invalid MongoDB username or password.')
-        return db
+        return conn[self.database_name]
 
     @cached_property
     def database(self):

@@ -1,10 +1,13 @@
-from __future__ import absolute_import, unicode_literals
+from unittest.mock import patch
 
 import boto3
 import pytest
 from botocore.exceptions import ClientError
-from case import patch
-from moto import mock_s3
+
+try:
+    from moto import mock_aws
+except ImportError:
+    from moto import mock_s3 as mock_aws
 
 from celery import states
 from celery.backends.s3 import S3Backend
@@ -85,7 +88,7 @@ class test_S3Backend:
             's3', endpoint_url=endpoint_url)
 
     @pytest.mark.parametrize("key", ['uuid', b'uuid'])
-    @mock_s3
+    @mock_aws
     def test_set_and_get_a_key(self, key):
         self._mock_s3_resource()
 
@@ -98,7 +101,7 @@ class test_S3Backend:
 
         assert s3_backend.get(key) == 'another_status'
 
-    @mock_s3
+    @mock_aws
     def test_set_and_get_a_result(self):
         self._mock_s3_resource()
 
@@ -112,7 +115,7 @@ class test_S3Backend:
         value = s3_backend.get_result('foo')
         assert value == 'baar'
 
-    @mock_s3
+    @mock_aws
     def test_get_a_missing_key(self):
         self._mock_s3_resource()
 
@@ -141,8 +144,9 @@ class test_S3Backend:
         with pytest.raises(ClientError):
             s3_backend.get('uuidddd')
 
-    @mock_s3
-    def test_delete_a_key(self):
+    @pytest.mark.parametrize("key", ['uuid', b'uuid'])
+    @mock_aws
+    def test_delete_a_key(self, key):
         self._mock_s3_resource()
 
         self.app.conf.s3_access_key_id = 'somekeyid'
@@ -150,14 +154,14 @@ class test_S3Backend:
         self.app.conf.s3_bucket = 'bucket'
 
         s3_backend = S3Backend(app=self.app)
-        s3_backend._set_with_state('uuid', 'another_status', states.SUCCESS)
-        assert s3_backend.get('uuid') == 'another_status'
+        s3_backend._set_with_state(key, 'another_status', states.SUCCESS)
+        assert s3_backend.get(key) == 'another_status'
 
-        s3_backend.delete('uuid')
+        s3_backend.delete(key)
 
-        assert s3_backend.get('uuid') is None
+        assert s3_backend.get(key) is None
 
-    @mock_s3
+    @mock_aws
     def test_with_a_non_existing_bucket(self):
         self._mock_s3_resource()
 

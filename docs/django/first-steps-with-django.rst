@@ -19,8 +19,8 @@ Using Celery with Django
 
 .. note::
 
-    Celery 4.0 supports Django 1.8 and newer versions. Please use Celery 3.1
-    for versions older than Django 1.8.
+    Celery 5.3.x supports Django 2.2 LTS or newer versions.
+    Please use Celery 5.2.x for versions older than Django 2.2 or Celery 4.4.x if your Django version is older than 1.11.
 
 To use Celery with your Django project you must first define
 an instance of the Celery library (called an "app")
@@ -54,15 +54,8 @@ for simple projects you may use a single contained module that defines
 both the app and tasks, like in the :ref:`tut-celery` tutorial.
 
 Let's break down what happens in the first module,
-first we import absolute imports from the future, so that our
-``celery.py`` module won't clash with the library:
-
-.. code-block:: python
-
-    from __future__ import absolute_import
-
-Then we set the default :envvar:`DJANGO_SETTINGS_MODULE` environment variable
-for the :program:`celery` command-line program:
+first, we set the default :envvar:`DJANGO_SETTINGS_MODULE` environment
+variable for the :program:`celery` command-line program:
 
 .. code-block:: python
 
@@ -96,6 +89,18 @@ becomes ``CELERY_TASK_ALWAYS_EAGER``, and the :setting:`broker_url`
 setting becomes ``CELERY_BROKER_URL``. This also applies to the
 workers settings, for instance, the :setting:`worker_concurrency`
 setting becomes ``CELERY_WORKER_CONCURRENCY``.
+
+For example, a Django project's configuration file might include:
+
+.. code-block:: python
+    :caption: settings.py
+
+    ...
+
+    # Celery Configuration Options
+    CELERY_TIMEZONE = "Australia/Tasmania"
+    CELERY_TASK_TRACK_STARTED = True
+    CELERY_TASK_TIME_LIMIT = 30 * 60
 
 You can pass the settings object directly instead, but using a string
 is better since then the worker doesn't have to serialize the object.
@@ -146,16 +151,65 @@ concrete app instance:
 .. seealso::
 
     You can find the full source code for the Django example project at:
-    https://github.com/celery/celery/tree/master/examples/django/
+    https://github.com/celery/celery/tree/main/examples/django/
 
-.. admonition:: Relative Imports
+Trigger tasks at the end of the database transaction
+----------------------------------------------------
 
-    You have to be consistent in how you import the task module.
-    For example, if you have ``project.app`` in ``INSTALLED_APPS``, then you
-    must also import the tasks ``from project.app`` or else the names
-    of the tasks will end up being different.
+A common pitfall with Django is triggering a task immediately and not wait until
+the end of the database transaction, which means that the Celery task may run
+before all changes are persisted to the database. For example:
 
-    See :ref:`task-naming-relative-imports`
+.. code-block:: python
+
+    # views.py
+    def create_user(request):
+        # Note: simplified example, use a form to validate input
+        user = User.objects.create(username=request.POST['username'])
+        send_email.delay(user.pk)
+        return HttpResponse('User created')
+
+    # task.py
+    @shared_task
+    def send_email(user_pk):
+        user = User.objects.get(pk=user_pk)
+        # send email ...
+
+In this case, the ``send_email`` task could start before the view has committed
+the transaction to the database, and therefore the task may not be able to find
+the user.
+
+A common solution is to use Django's `on_commit`_ hook to trigger the task
+after the transaction has been committed:
+
+.. _on_commit: https://docs.djangoproject.com/en/stable/topics/db/transactions/#django.db.transaction.on_commit
+
+.. code-block:: diff
+
+    - send_email.delay(user.pk)
+    + transaction.on_commit(lambda: send_email.delay(user.pk))
+
+.. versionadded:: 5.4
+
+Since this is such a common pattern, Celery 5.4 introduced a handy shortcut for this,
+using a :class:`~celery.contrib.django.task.DjangoTask`. Instead of calling
+:meth:`~celery.app.task.Task.delay`, you should call
+:meth:`~celery.contrib.django.task.DjangoTask.delay_on_commit`:
+
+.. code-block:: diff
+
+    - send_email.delay(user.pk)
+    + send_email.delay_on_commit(user.pk)
+
+
+This API takes care of wrapping the call into the `on_commit`_ hook for you.
+In rare cases where you want to trigger a task without waiting, the existing
+:meth:`~celery.app.task.Task.delay` API is still available.
+
+This task class should be used automatically if you've follow the setup steps above.
+However, if your app :ref:`uses a custom task base class <task-custom-classes>`,
+you'll need inherit from :class:`~celery.contrib.django.task.DjangoTask` instead of
+:class:`~celery.app.task.Task` to get this behaviour.
 
 Extensions
 ==========
@@ -242,7 +296,7 @@ development it is useful to be able to start a worker instance by using the
 
 .. code-block:: console
 
-    $ celery -A proj worker -l info
+    $ celery -A proj worker -l INFO
 
 For a complete listing of the command-line options available,
 use the help command:

@@ -1,7 +1,4 @@
-# -*- coding: utf-8 -*-
 """Secure serializer."""
-from __future__ import absolute_import, unicode_literals
-
 from kombu.serialization import dumps, loads, registry
 from kombu.utils.encoding import bytes_to_str, ensure_bytes, str_to_bytes
 
@@ -15,7 +12,7 @@ from .utils import get_digest_algorithm, reraise_errors
 __all__ = ('SecureSerializer', 'register_auth')
 
 
-class SecureSerializer(object):
+class SecureSerializer:
     """Signed serializer."""
 
     def __init__(self, key=None, cert=None, cert_store=None,
@@ -91,11 +88,11 @@ class SecureSerializer(object):
         }
 
 
-def register_auth(key=None, cert=None, store=None,
+def register_auth(key=None, key_password=None, cert=None, store=None,
                   digest=DEFAULT_SECURITY_DIGEST,
                   serializer='json'):
     """Register security serializer."""
-    s = SecureSerializer(key and PrivateKey(key),
+    s = SecureSerializer(key and PrivateKey(key, password=key_password),
                          cert and Certificate(cert),
                          store and FSCertStore(store),
                          digest, serializer=serializer)

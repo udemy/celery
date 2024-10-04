@@ -23,7 +23,7 @@ You can start the worker in the foreground by executing the command:
 
 .. code-block:: console
 
-    $ celery -A proj worker -l info
+    $ celery -A proj worker -l INFO
 
 For a full list of available command-line options see
 :mod:`~celery.bin.worker`, or simply do:
@@ -97,6 +97,11 @@ longer version:
 
     $ ps auxww | awk '/celery worker/ {print $2}' | xargs kill -9
 
+.. versionchanged:: 5.2
+    On Linux systems, Celery now supports sending :sig:`KILL` signal to all child processes
+    after worker termination. This is done via `PR_SET_PDEATHSIG` option of ``prctl(2)``.
+
+
 .. _worker-restarting:
 
 Restarting the worker
@@ -108,7 +113,7 @@ is by using `celery multi`:
 
 .. code-block:: console
 
-    $ celery multi start 1 -A proj -l info -c4 --pidfile=/var/run/celery/%n.pid
+    $ celery multi start 1 -A proj -l INFO -c4 --pidfile=/var/run/celery/%n.pid
     $ celery multi restart 1 --pidfile=/var/run/celery/%n.pid
 
 For production deployments you should be using init-scripts or a process
@@ -132,6 +137,31 @@ isn't recommended in production:
     :sig:`HUP` is disabled on macOS because of a limitation on
     that platform.
 
+Automatic re-connection on connection loss to broker
+====================================================
+
+.. versionadded:: 5.3
+
+Unless :setting:`broker_connection_retry_on_startup` is set to False,
+Celery will automatically retry reconnecting to the broker after the first
+connection loss. :setting:`broker_connection_retry` controls whether to automatically
+retry reconnecting to the broker for subsequent reconnects.
+
+.. versionadded:: 5.1
+
+If :setting:`worker_cancel_long_running_tasks_on_connection_loss` is set to True,
+Celery will also cancel any long running task that is currently running.
+
+.. versionadded:: 5.3
+
+Since the message broker does not track how many tasks were already fetched before
+the connection was lost, Celery will reduce the prefetch count by the number of
+tasks that are currently running multiplied by :setting:`worker_prefetch_multiplier`.
+The prefetch count will be gradually restored to the maximum allowed after
+each time a task that was running before the connection was lost is complete.
+
+This feature is enabled by default, but can be disabled by setting False
+to :setting:`worker_enable_prefetch_count_reduction`.
 
 .. _worker-process-signals:
 
@@ -324,12 +354,26 @@ Commands
 
 ``revoke``: Revoking tasks
 --------------------------
-:pool support: all, terminate only supported by prefork
+:pool support: all, terminate only supported by prefork and eventlet
 :broker support: *amqp, redis*
 :command: :program:`celery -A proj control revoke <task_id>`
 
 All worker nodes keeps a memory of revoked task ids, either in-memory or
 persistent on disk (see :ref:`worker-persistent-revokes`).
+
+.. note::
+
+    The maximum number of revoked tasks to keep in memory can be
+    specified using the ``CELERY_WORKER_REVOKES_MAX`` environment
+    variable, which defaults to 50000. When the limit has been exceeded,
+    the revokes will be active for 10800 seconds (3 hours) before being
+    expired. This value can be changed using the
+    ``CELERY_WORKER_REVOKE_EXPIRES`` environment variable.
+
+    Memory limits can also be set for successful tasks through the
+    ``CELERY_WORKER_SUCCESSFUL_MAX`` and
+    ``CELERY_WORKER_SUCCESSFUL_EXPIRES`` environment variables, and
+    default to 1000 and 10800 respectively.
 
 When a worker receives a revoke request it will skip executing
 the task, but it won't terminate an already executing task unless
@@ -410,7 +454,7 @@ argument to :program:`celery worker`:
 
 .. code-block:: console
 
-    $ celery -A proj worker -l info --statedb=/var/run/celery/worker.state
+    $ celery -A proj worker -l INFO --statedb=/var/run/celery/worker.state
 
 or if you use :program:`celery multi` you want to create one file per
 worker instance so use the `%n` format to expand the current node
@@ -418,7 +462,7 @@ name:
 
 .. code-block:: console
 
-    celery multi start 2 -l info --statedb=/var/run/celery/%n.state
+    celery multi start 2 -l INFO --statedb=/var/run/celery/%n.state
 
 
 See also :ref:`worker-files`
@@ -427,6 +471,71 @@ Note that remote control commands must be working for revokes to work.
 Remote control commands are only supported by the RabbitMQ (amqp) and Redis
 at this point.
 
+.. control:: revoke_by_stamped_header
+
+``revoke_by_stamped_header``: Revoking tasks by their stamped headers
+---------------------------------------------------------------------
+:pool support: all, terminate only supported by prefork and eventlet
+:broker support: *amqp, redis*
+:command: :program:`celery -A proj control revoke_by_stamped_header <header=value>`
+
+This command is similar to :meth:`~@control.revoke`, but instead of
+specifying the task id(s), you specify the stamped header(s) as key-value pair(s),
+and each task that has a stamped header matching the key-value pair(s) will be revoked.
+
+.. warning::
+
+    The revoked headers mapping is not persistent across restarts, so if you
+    restart the workers, the revoked headers will be lost and need to be
+    mapped again.
+
+.. warning::
+
+    This command may perform poorly if your worker pool concurrency is high
+    and terminate is enabled, since it will have to iterate over all the running
+    tasks to find the ones with the specified stamped header.
+
+**Example**
+
+.. code-block:: pycon
+
+    >>> app.control.revoke_by_stamped_header({'header': 'value'})
+
+    >>> app.control.revoke_by_stamped_header({'header': 'value'}, terminate=True)
+
+    >>> app.control.revoke_by_stamped_header({'header': 'value'}, terminate=True, signal='SIGKILL')
+
+
+Revoking multiple tasks by stamped headers
+------------------------------------------
+
+.. versionadded:: 5.3
+
+The ``revoke_by_stamped_header`` method also accepts a list argument, where it will revoke
+by several headers or several values.
+
+**Example**
+
+.. code-block:: pycon
+
+    >> app.control.revoke_by_stamped_header({
+    ...    'header_A': 'value_1',
+    ...    'header_B': ['value_2', 'value_3'],
+    })
+
+This will revoke all of the tasks that have a stamped header ``header_A`` with value ``value_1``,
+and all of the tasks that have a stamped header ``header_B`` with values ``value_2`` or ``value_3``.
+
+**CLI Example**
+
+.. code-block:: console
+
+    $ celery -A proj control revoke_by_stamped_header stamped_header_key_A=stamped_header_value_1 stamped_header_key_B=stamped_header_value_2
+
+    $ celery -A proj control revoke_by_stamped_header stamped_header_key_A=stamped_header_value_1 stamped_header_key_B=stamped_header_value_2 --terminate
+
+    $ celery -A proj control revoke_by_stamped_header stamped_header_key_A=stamped_header_value_1 stamped_header_key_B=stamped_header_value_2 --terminate --signal=SIGKILL
+
 .. _worker-time-limits:
 
 Time Limits
@@ -434,7 +543,7 @@ Time Limits
 
 .. versionadded:: 2.0
 
-:pool support: *prefork/gevent*
+:pool support: *prefork/gevent (see note below)*
 
 .. sidebar:: Soft, or hard?
 
@@ -467,12 +576,19 @@ time limit kills it:
             clean_up_in_a_hurry()
 
 Time limits can also be set using the :setting:`task_time_limit` /
-:setting:`task_soft_time_limit` settings.
+:setting:`task_soft_time_limit` settings. You can also specify time
+limits for client side operation using ``timeout`` argument of
+``AsyncResult.get()`` function.
 
 .. note::
 
     Time limits don't currently work on platforms that don't support
     the :sig:`SIGUSR1` signal.
+
+.. note::
+
+    The gevent pool does not implement soft time limits. Additionally,
+    it will not enforce the hard time limit if the task is blocking.
 
 
 Changing time limits at run-time
@@ -592,7 +708,7 @@ which needs two numbers: the maximum and minimum number of pool processes:
               10 if necessary).
 
 You can also define your own rules for the autoscaler by subclassing
-:class:`~celery.worker.autoscaler.Autoscaler`.
+:class:`~celery.worker.autoscale.Autoscaler`.
 Some ideas for metrics include load average or the amount of memory available.
 You can specify a custom autoscaler with the :setting:`worker_autoscaler` setting.
 
@@ -611,7 +727,7 @@ separated list of queues to the :option:`-Q <celery worker -Q>` option:
 
 .. code-block:: console
 
-    $ celery -A proj worker -l info -Q foo,bar,baz
+    $ celery -A proj worker -l INFO -Q foo,bar,baz
 
 If the queue name is defined in :setting:`task_queues` it will use that
 configuration, but if it's not defined in the list of queues Celery will
@@ -732,7 +848,7 @@ to specify the workers that should reply to the request:
 
 
 This can also be done programmatically by using the
-:meth:`@control.inspect.active_queues` method:
+:meth:`~celery.app.control.Inspect.active_queues` method:
 
 .. code-block:: pycon
 
@@ -771,7 +887,7 @@ Dump of registered tasks
 ------------------------
 
 You can get a list of tasks registered in the worker using the
-:meth:`~@control.inspect.registered`:
+:meth:`~celery.app.control.Inspect.registered`:
 
 .. code-block:: pycon
 
@@ -785,7 +901,7 @@ Dump of currently executing tasks
 ---------------------------------
 
 You can get a list of active tasks using
-:meth:`~@control.inspect.active`:
+:meth:`~celery.app.control.Inspect.active`:
 
 .. code-block:: pycon
 
@@ -802,7 +918,7 @@ Dump of scheduled (ETA) tasks
 -----------------------------
 
 You can get a list of tasks waiting to be scheduled by using
-:meth:`~@control.inspect.scheduled`:
+:meth:`~celery.app.control.Inspect.scheduled`:
 
 .. code-block:: pycon
 
@@ -834,7 +950,7 @@ Reserved tasks are tasks that have been received, but are still waiting to be
 executed.
 
 You can get a list of these using
-:meth:`~@control.inspect.reserved`:
+:meth:`~celery.app.control.Inspect.reserved`:
 
 .. code-block:: pycon
 
@@ -852,201 +968,14 @@ Statistics
 ----------
 
 The remote control command ``inspect stats`` (or
-:meth:`~@control.inspect.stats`) will give you a long list of useful (or not
+:meth:`~celery.app.control.Inspect.stats`) will give you a long list of useful (or not
 so useful) statistics about the worker:
 
 .. code-block:: console
 
     $ celery -A proj inspect stats
 
-The output will include the following fields:
-
-- ``broker``
-
-    Section for broker information.
-
-    * ``connect_timeout``
-
-        Timeout in seconds (int/float) for establishing a new connection.
-
-    * ``heartbeat``
-
-        Current heartbeat value (set by client).
-
-    * ``hostname``
-
-        Node name of the remote broker.
-
-    * ``insist``
-
-        No longer used.
-
-    * ``login_method``
-
-        Login method used to connect to the broker.
-
-    * ``port``
-
-        Port of the remote broker.
-
-    * ``ssl``
-
-        SSL enabled/disabled.
-
-    * ``transport``
-
-        Name of transport used (e.g., ``amqp`` or ``redis``)
-
-    * ``transport_options``
-
-        Options passed to transport.
-
-    * ``uri_prefix``
-
-        Some transports expects the host name to be a URL.
-
-        .. code-block:: text
-
-            redis+socket:///tmp/redis.sock
-
-        In this example the URI-prefix will be ``redis``.
-
-    * ``userid``
-
-        User id used to connect to the broker with.
-
-    * ``virtual_host``
-
-        Virtual host used.
-
-- ``clock``
-
-    Value of the workers logical clock. This is a positive integer and should
-    be increasing every time you receive statistics.
-
-- ``uptime``
-
-    Numbers of seconds since the worker controller was started
-
-- ``pid``
-
-    Process id of the worker instance (Main process).
-
-- ``pool``
-
-    Pool-specific section.
-
-    * ``max-concurrency``
-
-        Max number of processes/threads/green threads.
-
-    * ``max-tasks-per-child``
-
-        Max number of tasks a thread may execute before being recycled.
-
-    * ``processes``
-
-        List of PIDs (or thread-id's).
-
-    * ``put-guarded-by-semaphore``
-
-        Internal
-
-    * ``timeouts``
-
-        Default values for time limits.
-
-    * ``writes``
-
-        Specific to the prefork pool, this shows the distribution of writes
-        to each process in the pool when using async I/O.
-
-- ``prefetch_count``
-
-    Current prefetch count value for the task consumer.
-
-- ``rusage``
-
-    System usage statistics. The fields available may be different
-    on your platform.
-
-    From :manpage:`getrusage(2)`:
-
-    * ``stime``
-
-        Time spent in operating system code on behalf of this process.
-
-    * ``utime``
-
-        Time spent executing user instructions.
-
-    * ``maxrss``
-
-        The maximum resident size used by this process (in kilobytes).
-
-    * ``idrss``
-
-        Amount of non-shared memory used for data (in kilobytes times ticks of
-        execution)
-
-    * ``isrss``
-
-        Amount of non-shared memory used for stack space (in kilobytes times
-        ticks of execution)
-
-    * ``ixrss``
-
-        Amount of memory shared with other processes (in kilobytes times
-        ticks of execution).
-
-    * ``inblock``
-
-        Number of times the file system had to read from the disk on behalf of
-        this process.
-
-    * ``oublock``
-
-        Number of times the file system has to write to disk on behalf of
-        this process.
-
-    * ``majflt``
-
-        Number of page faults that were serviced by doing I/O.
-
-    * ``minflt``
-
-        Number of page faults that were serviced without doing I/O.
-
-    * ``msgrcv``
-
-        Number of IPC messages received.
-
-    * ``msgsnd``
-
-        Number of IPC messages sent.
-
-    * ``nvcsw``
-
-        Number of times this process voluntarily invoked a context switch.
-
-    * ``nivcsw``
-
-        Number of times an involuntary context switch took place.
-
-    * ``nsignals``
-
-        Number of signals received.
-
-    * ``nswap``
-
-        The number of times this process was swapped entirely out of memory.
-
-
-- ``total``
-
-    Map of task names and the total number of tasks with that type
-    the worker has accepted since start-up.
-
+For the output details, consult the reference documentation of :meth:`~celery.app.control.Inspect.stats`.
 
 Additional Commands
 ===================
@@ -1125,7 +1054,7 @@ There are two types of remote control commands:
 
 Remote control commands are registered in the control panel and
 they take a single argument: the current
-:class:`~celery.worker.control.ControlDispatch` instance.
+:class:`!celery.worker.control.ControlDispatch` instance.
 From there you have access to the active
 :class:`~celery.worker.consumer.Consumer` if needed.
 

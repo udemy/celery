@@ -10,6 +10,7 @@
 .. toctree::
     :maxdepth: 1
 
+    cli
     celery
     celery.app
     celery.app.task
@@ -36,6 +37,7 @@
     celery.loaders.base
     celery.states
     celery.contrib.abortable
+    celery.contrib.django.task
     celery.contrib.migrate
     celery.contrib.pytest
     celery.contrib.sphinx

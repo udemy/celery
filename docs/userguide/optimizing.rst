@@ -18,7 +18,7 @@ responsiveness at times of high load.
 Ensuring Operations
 ===================
 
-In the book `Programming Pearls`_, Jon Bentley presents the concept of
+In the book Programming Pearls, Jon Bentley presents the concept of
 back-of-the-envelope calculations by asking the question;
 
     ❝ How much water flows out of the Mississippi River in a day? ❞
@@ -37,8 +37,6 @@ A way to do this is by :ref:`using Munin <monitoring-munin>`.
 You should set up alerts, that'll notify you as soon as any queue has
 reached an unacceptable size. This way you can take appropriate action
 like adding new worker nodes, or revoking unnecessary tasks.
-
-.. _`Programming Pearls`: http://www.cs.bell-labs.com/cm/cs/pearls/
 
 .. _`The back of the envelope`:
     http://books.google.com/books?id=kse_7qbWbjsC&pg=PA67
@@ -178,6 +176,38 @@ You can enable this behavior by using the following configuration options:
 
     task_acks_late = True
     worker_prefetch_multiplier = 1
+
+Memory Usage
+------------
+
+If you are experiencing high memory usage on a prefork worker, first you need
+to determine whether the issue is also happening on the Celery master
+process. The Celery master process's memory usage should not continue to
+increase drastically after start-up. If you see this happening, it may indicate
+a memory leak bug which should be reported to the Celery issue tracker.
+
+If only your child processes have high memory usage, this indicates an issue
+with your task.
+
+Keep in mind, Python process memory usage has a "high watermark" and will not
+return memory to the operating system until the child process has stopped. This
+means a single high memory usage task could permanently increase the memory
+usage of a child process until it's restarted. Fixing this may require adding
+chunking logic to your task to reduce peak memory usage.
+
+Celery workers have two main ways to help reduce memory usage due to the "high
+watermark" and/or memory leaks in child processes: the
+:setting:`worker_max_tasks_per_child` and :setting:`worker_max_memory_per_child`
+settings.
+
+You must be careful not to set these settings too low, or else your workers
+will spend most of their time restarting child processes instead of processing
+tasks. For example, if you use a :setting:`worker_max_tasks_per_child` of 1
+and your child process takes 1 second to start, then that child process would
+only be able to process a maximum of 60 tasks per minute (assuming the task ran
+instantly). A similar issue can occur when your tasks always exceed
+:setting:`worker_max_memory_per_child`.
+
 
 .. rubric:: Footnotes
 
