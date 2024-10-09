@@ -407,9 +407,8 @@ def build_tracer(name, task, loader=None, hostname=None, store_errors=True,
                     'Task keyword arguments is not a mapping')
 
             task_request = Context(request or {}, args=args,
-                                   called_directly=False, kwargs=kwargs,
-                                   task_name=task.name)
-                                   called_directly=False, kwargs=kwargs)
+                                   called_directly=False, task_name=task.name,
+                                   kwargs=kwargs)
 
             redelivered = (task_request.delivery_info
                            and task_request.delivery_info.get('redelivered', False))
