@@ -289,6 +289,7 @@ def _shutdown_handler(worker, sig='TERM', how='Warm',
                 if callback:
                     callback(worker)
                 safe_say(f'worker: {how} shutdown (MainProcess#1)', sys.__stdout__)
+                import traceback; traceback.print_stack()
                 safe_say(f"_shutdown_handler._handle_request; worker.hostname={worker.hostname}; sig={sig}, how={how}, exitcode={exitcode}", sys.__stdout__)
                 signals.worker_shutting_down.send(
                     sender=worker.hostname, sig=sig, how=how,
