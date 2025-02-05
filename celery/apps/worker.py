@@ -9,6 +9,7 @@ platform tweaks, and so on.
 import logging
 import os
 import platform as _platform
+import signal
 import sys
 from datetime import datetime
 from functools import partial
@@ -288,10 +289,16 @@ def _shutdown_handler(worker, sig='TERM', how='Warm',
             if current_process()._name == 'MainProcess':
                 if callback:
                     callback(worker)
-                safe_say(f'worker: {how} shutdown (MainProcess#2)', sys.__stdout__)
-                import traceback
-                safe_say(traceback.format_stack(), sys.__stdout__)
+                safe_say(f'worker: {how} shutdown (MainProcess#3), sigterm_handler={signal.getsignal(signal.SIGTERM)}', sys.__stdout__)
+                import traceback; traceback.print_stack()
                 safe_say(f"_shutdown_handler._handle_request; worker.hostname={worker.hostname}; sig={sig}, how={how}, exitcode={exitcode}", sys.__stdout__)
+                from celery.worker import state as celery_worker_state
+                num_active_tasks = len(celery_worker_state.active_requests)
+                safe_say(f"_shutdown_handler._handle_request; num_active_tasks={num_active_tasks}", sys.__stdout__)
+                if num_active_tasks > 0:
+                    safe_say(f"_shutdown_handler._handle_request; canceling worker_shutting_down send...")
+                    return
+                safe_say(f"inside patched_worker_start; sending worker_shutting_down signal...", sys.__stdout__)
                 signals.worker_shutting_down.send(
                     sender=worker.hostname, sig=sig, how=how,
                     exitcode=exitcode,
